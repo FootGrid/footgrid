@@ -1,12 +1,14 @@
-package match
+package match_test
 
 import (
 	"errors"
 	"testing"
+
+	"github.com/FootGrid/footgrid/internal/match"
 )
 
 func TestCreateInputValidate(t *testing.T) {
-	valid := CreateInput{
+	valid := match.CreateInput{
 		OrganizationID:       "11111111-1111-4111-8111-111111111111",
 		VenueName:            "Turf Arena",
 		FormatCode:           "6V6",
@@ -22,33 +24,33 @@ func TestCreateInputValidate(t *testing.T) {
 
 	tests := []struct {
 		name  string
-		input CreateInput
+		input match.CreateInput
 	}{
 		{
 			name:  "non UUID organization id",
-			input: func() CreateInput { input := valid; input.OrganizationID = "org-1"; return input }(),
+			input: func() match.CreateInput { input := valid; input.OrganizationID = "org-1"; return input }(),
 		},
 		{
 			name:  "format and player count mismatch",
-			input: func() CreateInput { input := valid; input.PlayersPerSide = 5; return input }(),
+			input: func() match.CreateInput { input := valid; input.PlayersPerSide = 5; return input }(),
 		},
 		{
 			name:  "unsupported format",
-			input: func() CreateInput { input := valid; input.FormatCode = "6v6"; return input }(),
+			input: func() match.CreateInput { input := valid; input.FormatCode = "6v6"; return input }(),
 		},
 		{
 			name:  "duration remains minutes instead of seconds",
-			input: func() CreateInput { input := valid; input.TotalDurationSeconds = 40; return input }(),
+			input: func() match.CreateInput { input := valid; input.TotalDurationSeconds = 40; return input }(),
 		},
 		{
 			name:  "blank display name",
-			input: func() CreateInput { input := valid; input.AwayDisplayName = "  "; return input }(),
+			input: func() match.CreateInput { input := valid; input.AwayDisplayName = "  "; return input }(),
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			err := test.input.Validate()
-			if !errors.Is(err, ErrInvalidMatchInput) {
+			if !errors.Is(err, match.ErrInvalidMatchInput) {
 				t.Fatalf("expected ErrInvalidMatchInput, got %v", err)
 			}
 		})
@@ -56,7 +58,7 @@ func TestCreateInputValidate(t *testing.T) {
 }
 
 func TestCreateInputValidateAllowsCustomFormat(t *testing.T) {
-	input := CreateInput{
+	input := match.CreateInput{
 		OrganizationID:       "11111111-1111-4111-8111-111111111111",
 		FormatCode:           "CUSTOM",
 		PlayersPerSide:       7,

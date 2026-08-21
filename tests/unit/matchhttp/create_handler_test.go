@@ -1,4 +1,4 @@
-package matchhttp
+package matchhttp_test
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/FootGrid/footgrid/internal/match"
+	matchhttp "github.com/FootGrid/footgrid/internal/match/httpapi"
 	platformhttpapi "github.com/FootGrid/footgrid/internal/platform/httpapi"
 )
 
@@ -50,7 +51,7 @@ func TestCreateHandlerCreatesDraftFromAPIPayload(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/v1/matches", strings.NewReader(validCreateMatchJSON))
 	request.Header.Set("Idempotency-Key", "create-draft-request-001")
-	platformhttpapi.WithMiddleware(CreateHandler(creator)).ServeHTTP(recorder, request)
+	platformhttpapi.WithMiddleware(matchhttp.CreateHandler(creator)).ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", recorder.Code, recorder.Body.String())
@@ -87,7 +88,7 @@ func TestCreateHandlerRejectsInvalidRequestsBeforePersistence(t *testing.T) {
 			recorder := httptest.NewRecorder()
 			request := httptest.NewRequest(http.MethodPost, "/v1/matches", strings.NewReader(test.body))
 			request.Header.Set("Idempotency-Key", test.idempotencyKey)
-			platformhttpapi.WithMiddleware(CreateHandler(creator)).ServeHTTP(recorder, request)
+			platformhttpapi.WithMiddleware(matchhttp.CreateHandler(creator)).ServeHTTP(recorder, request)
 			if recorder.Code != test.wantStatus {
 				t.Fatalf("expected %d, got %d: %s", test.wantStatus, recorder.Code, recorder.Body.String())
 			}
@@ -103,7 +104,7 @@ func TestCreateHandlerReturnsConflictForChangedIdempotentRequest(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/v1/matches", strings.NewReader(validCreateMatchJSON))
 	request.Header.Set("Idempotency-Key", "create-draft-request-001")
-	platformhttpapi.WithMiddleware(CreateHandler(creator)).ServeHTTP(recorder, request)
+	platformhttpapi.WithMiddleware(matchhttp.CreateHandler(creator)).ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusConflict {
 		t.Fatalf("expected 409, got %d: %s", recorder.Code, recorder.Body.String())
 	}
@@ -117,7 +118,7 @@ func TestCreateHandlerMapsRepositoryValidationToUnprocessableEntity(t *testing.T
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/v1/matches", strings.NewReader(validCreateMatchJSON))
 	request.Header.Set("Idempotency-Key", "create-draft-request-001")
-	platformhttpapi.WithMiddleware(CreateHandler(creator)).ServeHTTP(recorder, request)
+	platformhttpapi.WithMiddleware(matchhttp.CreateHandler(creator)).ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("expected 422, got %d: %s", recorder.Code, recorder.Body.String())
 	}

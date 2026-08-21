@@ -2,7 +2,7 @@ GO ?= go
 MIGRATE ?= migrate
 DATABASE_URL ?= postgres://footgrid:footgrid@localhost:5432/footgrid?sslmode=disable
 
-.PHONY: fmt fmt-check lint test test-race test-integration build run-match-api migrate-up migrate-down openapi-check
+.PHONY: fmt fmt-check lint test test-unit test-race test-integration build run-match-api migrate-up migrate-down openapi-check
 
 fmt:
 	$(GO) fmt ./...
@@ -14,7 +14,10 @@ lint:
 	$(GO) vet ./...
 
 test:
-	$(GO) test ./...
+	$(MAKE) test-unit
+
+test-unit:
+	$(GO) test ./tests/unit/...
 
 test-race:
 	$(GO) test -race ./...

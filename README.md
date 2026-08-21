@@ -36,6 +36,7 @@ local development only; deployed environments use Cognito JWT verification.
 make fmt             # format Go code
 make lint            # vet all packages
 make test            # unit tests
+make test-unit       # unit tests only
 make test-integration # requires local Postgres
 make migrate-up      # apply database migrations
 make migrate-down    # roll back one migration
@@ -65,12 +66,13 @@ behavior and other package-internal contracts. Cross-package tests belong under
 `tests/`, where they use public APIs and can run against real infrastructure.
 
 ```text
-internal/<area>/*_test.go  package unit tests
+internal/<area>/            production code only
+tests/unit/<area>/          package unit tests
 tests/integration/          PostgreSQL and service integration tests
 tests/contract/             API contract tests (when added)
 ```
 
-Run `make test` for the fast suite. Run `make test-integration` only after
+Run `make test` for the fast unit suite. Run `make test-integration` only after
 starting PostgreSQL and applying the migrations.
 
 ## Source of truth
