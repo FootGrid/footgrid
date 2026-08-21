@@ -28,6 +28,19 @@ type Idempotency struct {
 	RequestHash []byte
 }
 
+func (idempotency Idempotency) Validate() error {
+	if len(idempotency.Key) < 16 || len(idempotency.Key) > 128 {
+		return invalidMatchInput("Idempotency-Key must be between 16 and 128 characters")
+	}
+	if strings.TrimSpace(idempotency.Key) == "" {
+		return invalidMatchInput("Idempotency-Key must not be blank")
+	}
+	if len(idempotency.RequestHash) == 0 {
+		return invalidMatchInput("request hash is required")
+	}
+	return nil
+}
+
 type MatchSide struct {
 	TeamID      *string `json:"team_id"`
 	DisplayName string  `json:"display_name"`

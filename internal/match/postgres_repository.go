@@ -28,8 +28,8 @@ func (repository *PostgresRepository) Create(ctx context.Context, input CreateIn
 	if err := input.Validate(); err != nil {
 		return Match{}, err
 	}
-	if len(idempotency.RequestHash) == 0 {
-		return Match{}, fmt.Errorf("%w: request hash is required", ErrIdempotencyConflict)
+	if err := idempotency.Validate(); err != nil {
+		return Match{}, err
 	}
 
 	scope := "matches:create:" + input.OrganizationID

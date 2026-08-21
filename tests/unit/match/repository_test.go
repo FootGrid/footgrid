@@ -71,3 +71,21 @@ func TestCreateInputValidateAllowsCustomFormat(t *testing.T) {
 		t.Fatalf("expected valid custom format, got %v", err)
 	}
 }
+
+func TestIdempotencyValidateRequiresUsableKeyAndHash(t *testing.T) {
+	tests := []struct {
+		name        string
+		idempotency match.Idempotency
+	}{
+		{name: "short key", idempotency: match.Idempotency{Key: "too-short", RequestHash: []byte("hash")}},
+		{name: "blank key", idempotency: match.Idempotency{Key: "                ", RequestHash: []byte("hash")}},
+		{name: "missing hash", idempotency: match.Idempotency{Key: "create-draft-request-001"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := test.idempotency.Validate(); !errors.Is(err, match.ErrInvalidMatchInput) {
+				t.Fatalf("expected ErrInvalidMatchInput, got %v", err)
+			}
+		})
+	}
+}
