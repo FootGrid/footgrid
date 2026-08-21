@@ -5,6 +5,7 @@ package match
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 type Side string
@@ -41,15 +42,34 @@ type Roster struct {
 }
 
 func (r Roster) Validate(playersPerSide int) error {
-	for _, side := range [][]Participant{r.Home, r.Away} {
-		if len(side) < playersPerSide {
-			return fmt.Errorf("each side requires at least %d participants", playersPerSide)
+	if playersPerSide < 2 || playersPerSide > 11 {
+		return fmt.Errorf("players per side must be between 2 and 11")
+	}
+	participantIDs := make(map[string]struct{}, len(r.Home)+len(r.Away))
+	for _, rosterSide := range []struct {
+		side         Side
+		participants []Participant
+	}{
+		{side: Home, participants: r.Home},
+		{side: Away, participants: r.Away},
+	} {
+		side := rosterSide.side
+		participants := rosterSide.participants
+		if len(participants) < playersPerSide {
+			return fmt.Errorf("%s requires at least %d participants", side, playersPerSide)
 		}
-		shirts := make(map[int]struct{}, len(side))
-		for _, participant := range side {
-			if participant.ID == "" || participant.DisplayName == "" {
-				return errors.New("each participant requires id and display name")
+		shirts := make(map[int]struct{}, len(participants))
+		for _, participant := range participants {
+			if !isUUID(participant.ID) || strings.TrimSpace(participant.DisplayName) == "" {
+				return errors.New("each participant requires a UUID id and display name")
 			}
+			if participant.Side != side {
+				return fmt.Errorf("participant %s must belong to %s", participant.ID, side)
+			}
+			if _, exists := participantIDs[participant.ID]; exists {
+				return fmt.Errorf("duplicate participant id %s", participant.ID)
+			}
+			participantIDs[participant.ID] = struct{}{}
 			if participant.ShirtNumber < 1 || participant.ShirtNumber > 99 {
 				return errors.New("shirt number must be between 1 and 99")
 			}
@@ -62,18 +82,37 @@ func (r Roster) Validate(playersPerSide int) error {
 	return nil
 }
 
+func isUUID(value string) bool {
+	if len(value) != 36 {
+		return false
+	}
+	for index, character := range value {
+		switch index {
+		case 8, 13, 18, 23:
+			if character != '-' {
+				return false
+			}
+		default:
+			if !((character >= '0' && character <= '9') || (character >= 'a' && character <= 'f') || (character >= 'A' && character <= 'F')) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 type Subject struct {
 	Role          string
 	ParticipantID string
 }
 
 type AppendEventCommand struct {
-	ClientEventID   string
+	ClientEventID    string
 	ExpectedSequence int
-	ActionCode      string
-	Side            Side
-	Subjects        []Subject
-	Qualifiers      map[string]any
+	ActionCode       string
+	Side             Side
+	Subjects         []Subject
+	Qualifiers       map[string]any
 }
 
 func (command AppendEventCommand) Validate() error {
