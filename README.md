@@ -52,7 +52,32 @@ internal/             domain/application/adapters, not importable externally
 migrations/           forward-only PostgreSQL migrations
 infra/terraform/      AWS infrastructure by environment
 docs/                 architecture decisions and delivery plan
+tests/                black-box integration and contract tests
 ```
 
 Start with [docs/implementation-plan.md](docs/implementation-plan.md). The
 public contract is [api/openapi.yaml](api/openapi.yaml).
+
+### Testing structure
+
+Unit tests remain beside the package they exercise so they can verify domain
+behavior and other package-internal contracts. Cross-package tests belong under
+`tests/`, where they use public APIs and can run against real infrastructure.
+
+```text
+internal/<area>/*_test.go  package unit tests
+tests/integration/          PostgreSQL and service integration tests
+tests/contract/             API contract tests (when added)
+```
+
+Run `make test` for the fast suite. Run `make test-integration` only after
+starting PostgreSQL and applying the migrations.
+
+## Source of truth
+
+`footgrid` is the deployable backend. Its versioned migrations and
+`api/openapi.yaml` are the canonical database and HTTP contract sources.
+The sibling `platform` directory contains browser prototypes and architecture
+reference material; it is not a second backend implementation or deployable
+service. Keep prototype changes aligned with the canonical contracts before
+wiring them to a service.

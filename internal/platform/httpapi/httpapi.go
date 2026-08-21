@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/FootGrid/footgrid/internal/platform/problem"
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
-	"github.com/FootGrid/footgrid/internal/platform/problem"
 )
 
 type contextKey string
@@ -91,7 +91,9 @@ type responseRecorder struct {
 	body   strings.Builder
 }
 
-func newResponseRecorder() *responseRecorder { return &responseRecorder{header: make(http.Header), status: http.StatusOK} }
-func (r *responseRecorder) Header() http.Header { return r.header }
-func (r *responseRecorder) WriteHeader(status int) { r.status = status }
+func newResponseRecorder() *responseRecorder {
+	return &responseRecorder{header: make(http.Header), status: http.StatusOK}
+}
+func (r *responseRecorder) Header() http.Header            { return r.header }
+func (r *responseRecorder) WriteHeader(status int)         { r.status = status }
 func (r *responseRecorder) Write(body []byte) (int, error) { return r.body.Write(body) }

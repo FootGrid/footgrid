@@ -6,10 +6,10 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/aws/aws-lambda-go/events"
-	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/FootGrid/footgrid/internal/platform/config"
 	"github.com/FootGrid/footgrid/internal/platform/database"
+	"github.com/aws/aws-lambda-go/events"
+	"github.com/aws/aws-lambda-go/lambda"
 )
 
 // The deployment subscribes this Lambda to an SQS queue fed by EventBridge.
