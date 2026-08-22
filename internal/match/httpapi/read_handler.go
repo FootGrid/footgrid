@@ -9,6 +9,17 @@ import (
 	platformhttpapi "github.com/FootGrid/footgrid/internal/platform/httpapi"
 )
 
+func MatchHandler(repository match.MatchReader) http.Handler {
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		result, err := repository.GetMatch(request.Context(), request.PathValue("matchId"))
+		if err != nil {
+			writeReadError(writer, request, err)
+			return
+		}
+		platformhttpapi.WriteJSON(writer, http.StatusOK, result)
+	})
+}
+
 func SnapshotHandler(repository match.ReadRepository) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		snapshot, err := repository.GetSnapshot(request.Context(), request.PathValue("matchId"))

@@ -8,6 +8,12 @@ servers:
 security:
   - bearerAuth: []
 paths:
+  /me:
+    get:
+      operationId: getMe
+      responses:
+        '200': { description: Current user and memberships, content: { application/json: { schema: { $ref: '#/components/schemas/MeResponse' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
   /health:
     get:
       security: []
@@ -136,6 +142,9 @@ components:
       required: true
       schema: { type: string, minLength: 16, maxLength: 128 }
   responses:
+    Unauthorized:
+      description: Authentication required
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
     NotFound:
       description: Resource not found
       content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
@@ -150,6 +159,27 @@ components:
       type: object
       required: [service, status]
       properties: { service: { type: string }, status: { type: string, enum: [ok] } }
+    MeResponse:
+      type: object
+      required: [user, memberships]
+      properties:
+        user: { $ref: '#/components/schemas/User' }
+        memberships: { type: array, items: { $ref: '#/components/schemas/Membership' } }
+    User:
+      type: object
+      required: [id, cognito_subject, display_name]
+      properties:
+        id: { type: string, format: uuid }
+        cognito_subject: { type: string, format: uuid }
+        display_name: { type: string }
+    Membership:
+      type: object
+      required: [id, organization_id, role, status]
+      properties:
+        id: { type: string, format: uuid }
+        organization_id: { type: string, format: uuid }
+        role: { type: string }
+        status: { type: string }
     Problem:
       type: object
       required: [title, status, trace_id]

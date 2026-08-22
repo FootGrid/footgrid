@@ -31,6 +31,31 @@ func TestApplyEventRejectsStaleSequence(t *testing.T) {
 	}
 }
 
+func TestApplyScoreAdjustmentChangesDerivedScore(t *testing.T) {
+	_, updated, err := match.ApplyEvent(match.Snapshot{Status: match.Live, EventSequence: 1, HomeScore: 2}, match.AppendEventCommand{
+		ClientEventID: "event-1", ExpectedSequence: 1, ActionCode: "SCORE_ADJUSTMENT", Side: match.Home,
+		Subjects:   []match.Subject{{Role: "PRIMARY", ParticipantID: "participant-1"}},
+		Qualifiers: map[string]any{"reason": "official correction", "score_delta": -1},
+	}, "server-event-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.HomeScore != 1 || updated.EventSequence != 2 {
+		t.Fatalf("unexpected adjusted snapshot: %#v", updated)
+	}
+}
+
+func TestApplyScoreAdjustmentRejectsUnderflow(t *testing.T) {
+	_, _, err := match.ApplyEvent(match.Snapshot{Status: match.Live, HomeScore: 0}, match.AppendEventCommand{
+		ClientEventID: "event-1", ActionCode: "SCORE_ADJUSTMENT", Side: match.Home,
+		Subjects:   []match.Subject{{Role: "PRIMARY", ParticipantID: "participant-1"}},
+		Qualifiers: map[string]any{"reason": "official correction", "score_delta": -1},
+	}, "server-event-1")
+	if !errors.Is(err, match.ErrScoreUnderflow) {
+		t.Fatalf("expected score underflow, got %v", err)
+	}
+}
+
 func TestStartLiveSessionRequiresReadyMatch(t *testing.T) {
 	if _, err := match.StartLiveSession(match.Snapshot{Status: match.Draft}); !errors.Is(err, match.ErrMatchNotReady) {
 		t.Fatalf("expected not-ready error, got %v", err)

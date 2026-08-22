@@ -105,6 +105,46 @@ func (repository *PostgresRepository) GetSnapshot(ctx context.Context, matchID s
 	return snapshot, nil
 }
 
+func (repository *PostgresRepository) GetMatch(ctx context.Context, matchID string) (Match, error) {
+	if !isUUID(matchID) {
+		return Match{}, invalidMatchInput("match_id must be a UUID")
+	}
+	rows, err := repository.pool.Query(ctx, `SELECT m.organization_id::text, m.status::text, l.current_sequence, s.side, s.team_id::text, s.display_name FROM match_data.matches m JOIN match_data.match_live_state l ON l.match_id = m.id JOIN match_data.match_sides s ON s.match_id = m.id WHERE m.id = $1::uuid ORDER BY s.side`, matchID)
+	if err != nil {
+		return Match{}, fmt.Errorf("read match: %w", err)
+	}
+	defer rows.Close()
+	var result Match
+	seen := 0
+	for rows.Next() {
+		var organizationID, status string
+		var sequence int
+		var side Side
+		var teamID *string
+		var displayName string
+		if err := rows.Scan(&organizationID, &status, &sequence, &side, &teamID, &displayName); err != nil {
+			return Match{}, fmt.Errorf("scan match: %w", err)
+		}
+		if seen == 0 {
+			result.ID, result.OrganizationID, result.Status, result.EventSequence = matchID, organizationID, Status(status), sequence
+		}
+		matchSide := MatchSide{TeamID: teamID, DisplayName: displayName}
+		if side == Home {
+			result.Home = matchSide
+		} else {
+			result.Away = matchSide
+		}
+		seen++
+	}
+	if err := rows.Err(); err != nil {
+		return Match{}, fmt.Errorf("read match rows: %w", err)
+	}
+	if seen == 0 {
+		return Match{}, ErrMatchNotFound
+	}
+	return result, nil
+}
+
 func (repository *PostgresRepository) ListEvents(ctx context.Context, matchID string, afterSequence int) (EventList, error) {
 	if !isUUID(matchID) {
 		return EventList{}, invalidMatchInput("match_id must be a UUID")
@@ -175,6 +215,48 @@ func reserveIdempotencyKey(ctx context.Context, tx pgx.Tx, scope string, idempot
 	return commandTag.RowsAffected() == 1, nil
 }
 
+func beginIdempotentMutation(ctx context.Context, pool *pgxpool.Pool, scope string, idempotency Idempotency) (pgx.Tx, bool, error) {
+	tx, err := pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, false, fmt.Errorf("begin idempotent mutation: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM platform.idempotency_records WHERE scope = $1 AND idempotency_key = $2 AND expires_at <= clock_timestamp()`, scope, idempotency.Key); err != nil {
+		_ = tx.Rollback(ctx)
+		return nil, false, fmt.Errorf("remove expired idempotency record: %w", err)
+	}
+	reserved, err := reserveIdempotencyKey(ctx, tx, scope, idempotency)
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		return nil, false, err
+	}
+	return tx, reserved, nil
+}
+
+func readStoredJSON(ctx context.Context, tx pgx.Tx, scope string, idempotency Idempotency, target any) error {
+	var requestHash, response []byte
+	var responseStatus int
+	if err := tx.QueryRow(ctx, `SELECT request_hash, response_status, response_body FROM platform.idempotency_records WHERE scope = $1 AND idempotency_key = $2`, scope, idempotency.Key).Scan(&requestHash, &responseStatus, &response); err != nil {
+		return fmt.Errorf("read idempotency record: %w", err)
+	}
+	if !bytes.Equal(requestHash, idempotency.RequestHash) {
+		return ErrIdempotencyConflict
+	}
+	if responseStatus != 200 && responseStatus != 201 {
+		return fmt.Errorf("stored idempotent response has unexpected status %d", responseStatus)
+	}
+	if err := json.Unmarshal(response, target); err != nil {
+		return fmt.Errorf("decode idempotent response: %w", err)
+	}
+	return nil
+}
+
+func saveIdempotencyResponse(ctx context.Context, tx pgx.Tx, scope string, key string, status int, response []byte) error {
+	if _, err := tx.Exec(ctx, `UPDATE platform.idempotency_records SET response_status = $3, response_body = $4::jsonb WHERE scope = $1 AND idempotency_key = $2`, scope, key, status, response); err != nil {
+		return fmt.Errorf("save idempotent response: %w", err)
+	}
+	return nil
+}
+
 func idempotentMatch(ctx context.Context, tx pgx.Tx, scope string, idempotency Idempotency) (Match, error) {
 	var requestHash, response []byte
 	var responseStatus int
@@ -243,12 +325,23 @@ func (repository *PostgresRepository) ReplaceRoster(ctx context.Context, matchID
 	if err := idempotency.Validate(); err != nil {
 		return Roster{}, err
 	}
-	var playersPerSide int
-	tx, err := repository.pool.BeginTx(ctx, pgx.TxOptions{})
+	scope := "matches:roster:" + matchID
+	tx, reserved, err := beginIdempotentMutation(ctx, repository.pool, scope, idempotency)
 	if err != nil {
-		return Roster{}, fmt.Errorf("begin roster transaction: %w", err)
+		return Roster{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if !reserved {
+		var result Roster
+		if err := readStoredJSON(ctx, tx, scope, idempotency, &result); err != nil {
+			return Roster{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return Roster{}, fmt.Errorf("commit idempotent roster read: %w", err)
+		}
+		return result, nil
+	}
+	var playersPerSide int
 	if err := tx.QueryRow(ctx, `SELECT players_per_side FROM match_data.matches WHERE id = $1::uuid AND status = 'DRAFT' FOR UPDATE`, matchID).Scan(&playersPerSide); err != nil {
 		return Roster{}, fmt.Errorf("lock draft for roster: %w", err)
 	}
@@ -263,10 +356,21 @@ func (repository *PostgresRepository) ReplaceRoster(ctx context.Context, matchID
 			return Roster{}, fmt.Errorf("insert roster participant: %w", err)
 		}
 	}
+	result, err := loadRoster(ctx, tx, matchID)
+	if err != nil {
+		return Roster{}, err
+	}
+	response, err := json.Marshal(result)
+	if err != nil {
+		return Roster{}, fmt.Errorf("encode roster response: %w", err)
+	}
+	if err := saveIdempotencyResponse(ctx, tx, scope, idempotency.Key, 200, response); err != nil {
+		return Roster{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Roster{}, fmt.Errorf("commit roster: %w", err)
 	}
-	return roster, nil
+	return result, nil
 }
 
 func (repository *PostgresRepository) SetInitialLineups(ctx context.Context, matchID string, homeStarterIDs, awayStarterIDs []string, idempotency Idempotency) (Roster, error) {
@@ -276,6 +380,22 @@ func (repository *PostgresRepository) SetInitialLineups(ctx context.Context, mat
 	if err := idempotency.Validate(); err != nil {
 		return Roster{}, err
 	}
+	scope := "matches:lineups:" + matchID
+	tx, reserved, err := beginIdempotentMutation(ctx, repository.pool, scope, idempotency)
+	if err != nil {
+		return Roster{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if !reserved {
+		var result Roster
+		if err := readStoredJSON(ctx, tx, scope, idempotency, &result); err != nil {
+			return Roster{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return Roster{}, fmt.Errorf("commit idempotent lineup read: %w", err)
+		}
+		return result, nil
+	}
 	if len(homeStarterIDs) == 0 || len(awayStarterIDs) == 0 || hasDuplicates(homeStarterIDs) || hasDuplicates(awayStarterIDs) {
 		return Roster{}, invalidMatchInput("both starter lists must be non-empty and unique")
 	}
@@ -284,11 +404,6 @@ func (repository *PostgresRepository) SetInitialLineups(ctx context.Context, mat
 			return Roster{}, invalidMatchInput("starter IDs must be UUIDs")
 		}
 	}
-	tx, err := repository.pool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return Roster{}, fmt.Errorf("begin lineup transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
 	var playersPerSide int
 	if err := tx.QueryRow(ctx, `SELECT players_per_side FROM match_data.matches WHERE id = $1::uuid AND status = 'DRAFT' FOR UPDATE`, matchID).Scan(&playersPerSide); err != nil {
 		return Roster{}, fmt.Errorf("lock draft for lineups: %w", err)
@@ -302,10 +417,45 @@ func (repository *PostgresRepository) SetInitialLineups(ctx context.Context, mat
 	if err := setLineupSide(ctx, tx, matchID, Away, awayStarterIDs); err != nil {
 		return Roster{}, err
 	}
+	result, err := loadRoster(ctx, tx, matchID)
+	if err != nil {
+		return Roster{}, err
+	}
+	response, err := json.Marshal(result)
+	if err != nil {
+		return Roster{}, fmt.Errorf("encode lineup response: %w", err)
+	}
+	if err := saveIdempotencyResponse(ctx, tx, scope, idempotency.Key, 200, response); err != nil {
+		return Roster{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Roster{}, fmt.Errorf("commit lineups: %w", err)
 	}
-	return Roster{}, nil
+	return result, nil
+}
+
+func loadRoster(ctx context.Context, tx pgx.Tx, matchID string) (Roster, error) {
+	rows, err := tx.Query(ctx, `SELECT p.id::text, s.side, p.shirt_number, p.display_name_snapshot, COALESCE(p.position_code, ''), p.participation_status::text, COALESCE(p.pitch_slot, '') FROM match_data.match_participants p JOIN match_data.match_sides s ON s.id = p.match_side_id WHERE p.match_id = $1::uuid ORDER BY s.side, p.shirt_number`, matchID)
+	if err != nil {
+		return Roster{}, fmt.Errorf("load roster: %w", err)
+	}
+	defer rows.Close()
+	var result Roster
+	for rows.Next() {
+		var participant Participant
+		if err := rows.Scan(&participant.ID, &participant.Side, &participant.ShirtNumber, &participant.DisplayName, &participant.PositionCode, &participant.ParticipationStatus, &participant.PitchSlot); err != nil {
+			return Roster{}, fmt.Errorf("scan roster: %w", err)
+		}
+		if participant.Side == Home {
+			result.Home = append(result.Home, participant)
+		} else {
+			result.Away = append(result.Away, participant)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return Roster{}, fmt.Errorf("read roster: %w", err)
+	}
+	return result, nil
 }
 
 func setLineupSide(ctx context.Context, tx pgx.Tx, matchID string, side Side, starterIDs []string) error {
@@ -338,11 +488,22 @@ func (repository *PostgresRepository) MarkReady(ctx context.Context, matchID str
 	if err := idempotency.Validate(); err != nil {
 		return Match{}, err
 	}
-	tx, err := repository.pool.BeginTx(ctx, pgx.TxOptions{})
+	scope := "matches:ready:" + matchID
+	tx, reserved, err := beginIdempotentMutation(ctx, repository.pool, scope, idempotency)
 	if err != nil {
 		return Match{}, fmt.Errorf("begin ready transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if !reserved {
+		var result Match
+		if err := readStoredJSON(ctx, tx, scope, idempotency, &result); err != nil {
+			return Match{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return Match{}, fmt.Errorf("commit idempotent ready read: %w", err)
+		}
+		return result, nil
+	}
 	var playersPerSide int
 	if err := tx.QueryRow(ctx, `SELECT players_per_side FROM match_data.matches WHERE id = $1::uuid AND status = 'DRAFT' FOR UPDATE`, matchID).Scan(&playersPerSide); err != nil {
 		return Match{}, fmt.Errorf("lock draft for ready: %w", err)
@@ -357,10 +518,18 @@ func (repository *PostgresRepository) MarkReady(ctx context.Context, matchID str
 	if _, err := tx.Exec(ctx, `UPDATE match_data.matches SET status = 'READY', status_version = status_version + 1 WHERE id = $1::uuid`, matchID); err != nil {
 		return Match{}, fmt.Errorf("mark match ready: %w", err)
 	}
+	result := Match{ID: matchID, Status: Ready}
+	response, err := json.Marshal(result)
+	if err != nil {
+		return Match{}, fmt.Errorf("encode ready response: %w", err)
+	}
+	if err := saveIdempotencyResponse(ctx, tx, scope, idempotency.Key, 201, response); err != nil {
+		return Match{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Match{}, fmt.Errorf("commit ready transition: %w", err)
 	}
-	return Match{ID: matchID, Status: Ready}, nil
+	return result, nil
 }
 
 func (repository *PostgresRepository) StartLiveSession(ctx context.Context, matchID string, idempotency Idempotency) (Snapshot, error) {

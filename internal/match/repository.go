@@ -46,6 +46,10 @@ type ReadRepository interface {
 	ListEvents(ctx context.Context, matchID string, afterSequence int) (EventList, error)
 }
 
+type MatchReader interface {
+	GetMatch(ctx context.Context, matchID string) (Match, error)
+}
+
 type EventList struct {
 	Items        []Event `json:"items"`
 	LastSequence int     `json:"last_sequence"`

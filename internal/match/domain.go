@@ -116,6 +116,42 @@ type AppendEventCommand struct {
 	Qualifiers       map[string]any `json:"qualifiers,omitempty"`
 }
 
+func (command AppendEventCommand) ScoreDelta() (int, error) {
+	switch command.ActionCode {
+	case "GOAL":
+		return 1, nil
+	case "SCORE_ADJUSTMENT":
+		value, ok := command.Qualifiers["score_delta"]
+		if !ok {
+			return 0, errors.New("SCORE_ADJUSTMENT requires score_delta")
+		}
+		var delta int
+		switch number := value.(type) {
+		case int:
+			delta = number
+		case float64:
+			if number != float64(int(number)) {
+				return 0, errors.New("score_delta must be an integer")
+			}
+			delta = int(number)
+		case json.Number:
+			parsed, err := number.Int64()
+			if err != nil {
+				return 0, errors.New("score_delta must be an integer")
+			}
+			delta = int(parsed)
+		default:
+			return 0, errors.New("score_delta must be an integer")
+		}
+		if delta < -1 || delta > 1 || delta == 0 {
+			return 0, errors.New("score_delta must be -1 or 1")
+		}
+		return delta, nil
+	default:
+		return 0, nil
+	}
+}
+
 func (command AppendEventCommand) Validate() error {
 	if strings.TrimSpace(command.ClientEventID) == "" {
 		return errors.New("client_event_id is required")
@@ -153,6 +189,9 @@ func (command AppendEventCommand) Validate() error {
 		if !ok || strings.TrimSpace(reason) == "" {
 			return errors.New("SCORE_ADJUSTMENT requires a reason")
 		}
+		if _, err := command.ScoreDelta(); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -164,15 +203,8 @@ type Event struct {
 }
 
 func (event Event) ScoreDelta() int {
-	if event.Command.ActionCode == "GOAL" {
-		return 1
-	}
-	if event.Command.ActionCode == "SCORE_ADJUSTMENT" {
-		if delta, ok := event.Command.Qualifiers["score_delta"].(float64); ok {
-			return int(delta)
-		}
-	}
-	return 0
+	delta, _ := event.Command.ScoreDelta()
+	return delta
 }
 
 func (event Event) MarshalJSON() ([]byte, error) {
@@ -216,6 +248,7 @@ var ErrMatchNotLive = errors.New("match is not live")
 var ErrMatchNotReady = errors.New("match is not ready")
 var ErrEventNotReversible = errors.New("event is not reversible")
 var ErrEventAlreadyReversed = errors.New("event has already been reversed")
+var ErrScoreUnderflow = errors.New("score cannot become negative")
 
 // StartLiveSession performs the only legal transition into live scoring.
 func StartLiveSession(snapshot Snapshot) (Snapshot, error) {
@@ -239,12 +272,16 @@ func ApplyEvent(snapshot Snapshot, command AppendEventCommand, eventID string) (
 		return Event{}, Snapshot{}, ErrSequenceConflict
 	}
 
+	delta, _ := command.ScoreDelta()
+	if delta < 0 && ((command.Side == Home && snapshot.HomeScore < -delta) || (command.Side == Away && snapshot.AwayScore < -delta)) {
+		return Event{}, Snapshot{}, ErrScoreUnderflow
+	}
 	snapshot.EventSequence++
-	if command.ActionCode == "GOAL" {
+	if delta != 0 {
 		if command.Side == Home {
-			snapshot.HomeScore++
+			snapshot.HomeScore += delta
 		} else {
-			snapshot.AwayScore++
+			snapshot.AwayScore += delta
 		}
 	}
 	return Event{ID: eventID, Sequence: snapshot.EventSequence, Command: command}, snapshot, nil

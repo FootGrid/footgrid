@@ -54,6 +54,7 @@ func main() {
 	mux.Handle("POST /v1/matches/{matchId}/events/{eventId}/reverse", commandHandler(matchhttp.ReverseEventHandler(drafts), "OWNER", "ADMIN", "ORGANIZER", "TEAM_MANAGER", "SCORER", "REFEREE"))
 	mux.Handle("GET /v1/matches/{matchId}/snapshot", matchhttp.SnapshotHandler(drafts))
 	mux.Handle("GET /v1/matches/{matchId}/events", matchhttp.ListEventsHandler(drafts))
+	mux.Handle("GET /v1/matches/{matchId}", matchhttp.MatchHandler(drafts))
 	// Match command handlers delegate domain and persistence work to internal/match.
 	handler := httpapi.WithMiddleware(mux)
 	if !config.AuthDisabled {

@@ -37,6 +37,10 @@ func FromContext(ctx context.Context) (Principal, bool) {
 	return principal, ok
 }
 
+func WithPrincipal(ctx context.Context, principal Principal) context.Context {
+	return context.WithValue(ctx, contextKey{}, principal)
+}
+
 func Middleware(verifier TokenVerifier, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.URL.Path == "/health" {
