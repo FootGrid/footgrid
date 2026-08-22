@@ -70,4 +70,3 @@ func AppendEventHandler(repository match.EventAppender) http.Handler {
 		platformhttpapi.WriteJSON(writer, http.StatusCreated, appendEventResponse{Event: eventResponse{ID: event.ID, Sequence: event.Sequence, ActionCode: event.Command.ActionCode, Side: event.Command.Side, Subjects: event.Command.Subjects, Qualifiers: event.Command.Qualifiers}, Snapshot: snapshot})
 	})
 }
-
