@@ -12,10 +12,18 @@ import (
 type Repository interface {
 	Create(ctx context.Context, input CreateInput, idempotency Idempotency) (Match, error)
 	GetSnapshot(ctx context.Context, matchID string) (Snapshot, error)
-	ReplaceRoster(ctx context.Context, matchID string, roster Roster) error
-	SetInitialLineups(ctx context.Context, matchID string, homeStarterIDs, awayStarterIDs []string) error
+	ReplaceRoster(ctx context.Context, matchID string, roster Roster, idempotency Idempotency) (Roster, error)
+	SetInitialLineups(ctx context.Context, matchID string, homeStarterIDs, awayStarterIDs []string, idempotency Idempotency) (Roster, error)
+	MarkReady(ctx context.Context, matchID string, idempotency Idempotency) (Match, error)
 	Append(ctx context.Context, matchID string, command AppendEventCommand) (Event, Snapshot, error)
 	Reverse(ctx context.Context, matchID, eventID, clientEventID string, expectedSequence int, reason string) (Event, Snapshot, error)
+}
+
+// SetupRepository is the narrow dependency for draft setup commands.
+type SetupRepository interface {
+	ReplaceRoster(ctx context.Context, matchID string, roster Roster, idempotency Idempotency) (Roster, error)
+	SetInitialLineups(ctx context.Context, matchID string, homeStarterIDs, awayStarterIDs []string, idempotency Idempotency) (Roster, error)
+	MarkReady(ctx context.Context, matchID string, idempotency Idempotency) (Match, error)
 }
 
 // DraftCreator is the narrow dependency used by the create-match HTTP handler.

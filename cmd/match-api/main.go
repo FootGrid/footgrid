@@ -31,6 +31,10 @@ func main() {
 	mux.Handle("GET /health", httpapi.HealthHandler("match-api", pool.Ping))
 	drafts := match.NewPostgresRepository(pool)
 	mux.Handle("POST /v1/matches", matchhttp.CreateHandler(drafts))
+	rosterHandler, lineupHandler, readyHandler := matchhttp.SetupHandlers(drafts)
+	mux.Handle("PUT /v1/matches/{matchId}/roster", rosterHandler)
+	mux.Handle("PUT /v1/matches/{matchId}/lineups", lineupHandler)
+	mux.Handle("POST /v1/matches/{matchId}/ready", readyHandler)
 	// Match command handlers delegate domain and persistence work to internal/match.
 	handler := httpapi.WithMiddleware(mux)
 	if os.Getenv("AWS_LAMBDA_RUNTIME_API") != "" {

@@ -63,6 +63,15 @@ paths:
       responses:
         '201': { description: Live session started, content: { application/json: { schema: { $ref: '#/components/schemas/Snapshot' } } } }
         '409': { $ref: '#/components/responses/Conflict' }
+  /matches/{matchId}/ready:
+    parameters: [{ $ref: '#/components/parameters/MatchID' }]
+    post:
+      operationId: markMatchReady
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      responses:
+        '201': { description: Match ready, content: { application/json: { schema: { $ref: '#/components/schemas/Match' } } } }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Validation' }
   /matches/{matchId}/events:
     parameters: [{ $ref: '#/components/parameters/MatchID' }]
     get:

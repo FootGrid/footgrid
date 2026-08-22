@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -157,4 +158,131 @@ func matchSideFromInput(teamID, displayName string) MatchSide {
 		return MatchSide{DisplayName: displayName}
 	}
 	return MatchSide{TeamID: &teamID, DisplayName: displayName}
+}
+
+func (repository *PostgresRepository) ReplaceRoster(ctx context.Context, matchID string, roster Roster, idempotency Idempotency) (Roster, error) {
+	if !isUUID(matchID) {
+		return Roster{}, invalidMatchInput("match_id must be a UUID")
+	}
+	if err := idempotency.Validate(); err != nil {
+		return Roster{}, err
+	}
+	var playersPerSide int
+	tx, err := repository.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return Roster{}, fmt.Errorf("begin roster transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := tx.QueryRow(ctx, `SELECT players_per_side FROM match_data.matches WHERE id = $1::uuid AND status = 'DRAFT' FOR UPDATE`, matchID).Scan(&playersPerSide); err != nil {
+		return Roster{}, fmt.Errorf("lock draft for roster: %w", err)
+	}
+	if err := roster.Validate(playersPerSide); err != nil {
+		return Roster{}, invalidMatchInput(err.Error())
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM match_data.match_participants WHERE match_id = $1::uuid`, matchID); err != nil {
+		return Roster{}, fmt.Errorf("clear roster: %w", err)
+	}
+	for _, participant := range append(append([]Participant{}, roster.Home...), roster.Away...) {
+		if _, err := tx.Exec(ctx, `INSERT INTO match_data.match_participants (id, match_id, match_side_id, shirt_number, display_name_snapshot, position_code, participation_status) SELECT $1::uuid, $2::uuid, id, $3, $4, NULLIF($5, ''), 'NOT_SELECTED' FROM match_data.match_sides WHERE match_id = $2::uuid AND side = $6`, participant.ID, matchID, participant.ShirtNumber, strings.TrimSpace(participant.DisplayName), strings.TrimSpace(participant.PositionCode), participant.Side); err != nil {
+			return Roster{}, fmt.Errorf("insert roster participant: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Roster{}, fmt.Errorf("commit roster: %w", err)
+	}
+	return roster, nil
+}
+
+func (repository *PostgresRepository) SetInitialLineups(ctx context.Context, matchID string, homeStarterIDs, awayStarterIDs []string, idempotency Idempotency) (Roster, error) {
+	if !isUUID(matchID) {
+		return Roster{}, invalidMatchInput("match_id must be a UUID")
+	}
+	if err := idempotency.Validate(); err != nil {
+		return Roster{}, err
+	}
+	if len(homeStarterIDs) == 0 || len(awayStarterIDs) == 0 || hasDuplicates(homeStarterIDs) || hasDuplicates(awayStarterIDs) {
+		return Roster{}, invalidMatchInput("both starter lists must be non-empty and unique")
+	}
+	for _, starterID := range append(append([]string{}, homeStarterIDs...), awayStarterIDs...) {
+		if !isUUID(starterID) {
+			return Roster{}, invalidMatchInput("starter IDs must be UUIDs")
+		}
+	}
+	tx, err := repository.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return Roster{}, fmt.Errorf("begin lineup transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var playersPerSide int
+	if err := tx.QueryRow(ctx, `SELECT players_per_side FROM match_data.matches WHERE id = $1::uuid AND status = 'DRAFT' FOR UPDATE`, matchID).Scan(&playersPerSide); err != nil {
+		return Roster{}, fmt.Errorf("lock draft for lineups: %w", err)
+	}
+	if len(homeStarterIDs) != playersPerSide || len(awayStarterIDs) != playersPerSide {
+		return Roster{}, invalidMatchInput(fmt.Sprintf("each lineup requires %d starters", playersPerSide))
+	}
+	if err := setLineupSide(ctx, tx, matchID, Home, homeStarterIDs); err != nil {
+		return Roster{}, err
+	}
+	if err := setLineupSide(ctx, tx, matchID, Away, awayStarterIDs); err != nil {
+		return Roster{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Roster{}, fmt.Errorf("commit lineups: %w", err)
+	}
+	return Roster{}, nil
+}
+
+func setLineupSide(ctx context.Context, tx pgx.Tx, matchID string, side Side, starterIDs []string) error {
+	var count int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM match_data.match_participants p JOIN match_data.match_sides s ON s.id = p.match_side_id WHERE p.match_id = $1::uuid AND s.side = $2 AND p.id = ANY($3::uuid[])`, matchID, side, starterIDs).Scan(&count); err != nil {
+		return fmt.Errorf("validate %s lineup: %w", strings.ToLower(string(side)), err)
+	}
+	if count != len(starterIDs) {
+		return invalidMatchInput(fmt.Sprintf("all %s starters must belong to the roster", strings.ToLower(string(side))))
+	}
+	_, err := tx.Exec(ctx, `UPDATE match_data.match_participants p SET participation_status = CASE WHEN p.id = ANY($2::uuid[]) THEN 'STARTER' ELSE 'BENCH' END FROM match_data.match_sides s WHERE p.match_id = $1::uuid AND p.match_side_id = s.id AND s.side = $3`, matchID, starterIDs, side)
+	return err
+}
+
+func hasDuplicates(values []string) bool {
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		if _, ok := seen[value]; ok {
+			return true
+		}
+		seen[value] = struct{}{}
+	}
+	return false
+}
+
+func (repository *PostgresRepository) MarkReady(ctx context.Context, matchID string, idempotency Idempotency) (Match, error) {
+	if !isUUID(matchID) {
+		return Match{}, invalidMatchInput("match_id must be a UUID")
+	}
+	if err := idempotency.Validate(); err != nil {
+		return Match{}, err
+	}
+	tx, err := repository.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return Match{}, fmt.Errorf("begin ready transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var playersPerSide int
+	if err := tx.QueryRow(ctx, `SELECT players_per_side FROM match_data.matches WHERE id = $1::uuid AND status = 'DRAFT' FOR UPDATE`, matchID).Scan(&playersPerSide); err != nil {
+		return Match{}, fmt.Errorf("lock draft for ready: %w", err)
+	}
+	var starterCount int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM match_data.match_participants WHERE match_id = $1::uuid AND participation_status = 'STARTER'`, matchID).Scan(&starterCount); err != nil {
+		return Match{}, err
+	}
+	if starterCount != playersPerSide*2 {
+		return Match{}, invalidMatchInput("both initial lineups are required")
+	}
+	if _, err := tx.Exec(ctx, `UPDATE match_data.matches SET status = 'READY', status_version = status_version + 1 WHERE id = $1::uuid`, matchID); err != nil {
+		return Match{}, fmt.Errorf("mark match ready: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Match{}, fmt.Errorf("commit ready transition: %w", err)
+	}
+	return Match{ID: matchID, Status: Ready}, nil
 }

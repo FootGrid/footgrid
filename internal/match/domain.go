@@ -27,18 +27,18 @@ const (
 )
 
 type Participant struct {
-	ID                  string
-	Side                Side
-	ShirtNumber         int
-	DisplayName         string
-	PositionCode        string
-	ParticipationStatus string
-	PitchSlot           string
+	ID                  string `json:"id"`
+	Side                Side   `json:"side"`
+	ShirtNumber         int    `json:"shirt_number"`
+	DisplayName         string `json:"display_name"`
+	PositionCode        string `json:"position_code,omitempty"`
+	ParticipationStatus string `json:"participation_status"`
+	PitchSlot           string `json:"pitch_slot,omitempty"`
 }
 
 type Roster struct {
-	Home []Participant
-	Away []Participant
+	Home []Participant `json:"home"`
+	Away []Participant `json:"away"`
 }
 
 func (r Roster) Validate(playersPerSide int) error {
