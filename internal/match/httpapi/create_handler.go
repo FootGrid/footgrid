@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/FootGrid/footgrid/internal/match"
+	platformauth "github.com/FootGrid/footgrid/internal/platform/auth"
 	platformhttpapi "github.com/FootGrid/footgrid/internal/platform/httpapi"
 )
 
@@ -33,6 +34,10 @@ type createMatchSide struct {
 }
 
 func CreateHandler(creator match.DraftCreator) http.HandlerFunc {
+	return CreateHandlerWithAuthorization(creator, nil)
+}
+
+func CreateHandlerWithAuthorization(creator match.DraftCreator, authorizer platformauth.OrganizationAuthorizer) http.HandlerFunc {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		idempotencyKey := strings.TrimSpace(request.Header.Get("Idempotency-Key"))
 		if len(idempotencyKey) < 16 || len(idempotencyKey) > 128 {
@@ -54,6 +59,21 @@ func CreateHandler(creator match.DraftCreator) http.HandlerFunc {
 		if err := input.Validate(); err != nil {
 			platformhttpapi.WriteProblem(writer, http.StatusUnprocessableEntity, "validation-error", err.Error(), request)
 			return
+		}
+		if authorizer != nil {
+			principal, ok := platformauth.FromContext(request.Context())
+			if !ok {
+				platformhttpapi.WriteProblem(writer, http.StatusUnauthorized, "unauthorized", "authenticated principal is required", request)
+				return
+			}
+			if err := authorizer.AuthorizeOrganization(request.Context(), principal.Subject, input.OrganizationID, "OWNER", "ADMIN", "ORGANIZER", "TEAM_MANAGER"); err != nil {
+				if errors.Is(err, platformauth.ErrForbidden) {
+					platformhttpapi.WriteProblem(writer, http.StatusForbidden, "forbidden", "organization membership does not permit match creation", request)
+				} else {
+					platformhttpapi.WriteProblem(writer, http.StatusInternalServerError, "internal-error", "unable to authorize organization access", request)
+				}
+				return
+			}
 		}
 		hash := sha256.Sum256(body)
 		created, err := creator.Create(request.Context(), input, match.Idempotency{Key: idempotencyKey, RequestHash: hash[:]})

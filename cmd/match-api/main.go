@@ -31,14 +31,27 @@ func main() {
 	mux := http.NewServeMux()
 	mux.Handle("GET /health", httpapi.HealthHandler("match-api", pool.Ping))
 	drafts := match.NewPostgresRepository(pool)
-	mux.Handle("POST /v1/matches", matchhttp.CreateHandler(drafts))
+	var organizationAuthorizer auth.OrganizationAuthorizer
+	var matchAuthorizer auth.MatchAuthorizer
+	if !config.AuthDisabled {
+		authorizer := auth.NewDatabaseAuthorizer(pool)
+		organizationAuthorizer = authorizer
+		matchAuthorizer = authorizer
+	}
+	commandHandler := func(handler http.Handler, roles ...string) http.Handler {
+		if matchAuthorizer == nil {
+			return handler
+		}
+		return auth.RequireMatch(matchAuthorizer, roles, handler)
+	}
+	mux.Handle("POST /v1/matches", matchhttp.CreateHandlerWithAuthorization(drafts, organizationAuthorizer))
 	rosterHandler, lineupHandler, readyHandler := matchhttp.SetupHandlers(drafts)
-	mux.Handle("PUT /v1/matches/{matchId}/roster", rosterHandler)
-	mux.Handle("PUT /v1/matches/{matchId}/lineups", lineupHandler)
-	mux.Handle("POST /v1/matches/{matchId}/ready", readyHandler)
-	mux.Handle("POST /v1/matches/{matchId}/live-session", matchhttp.LiveSessionHandler(drafts))
-	mux.Handle("POST /v1/matches/{matchId}/events", matchhttp.AppendEventHandler(drafts))
-	mux.Handle("POST /v1/matches/{matchId}/events/{eventId}/reverse", matchhttp.ReverseEventHandler(drafts))
+	mux.Handle("PUT /v1/matches/{matchId}/roster", commandHandler(rosterHandler, "OWNER", "ADMIN", "ORGANIZER", "TEAM_MANAGER"))
+	mux.Handle("PUT /v1/matches/{matchId}/lineups", commandHandler(lineupHandler, "OWNER", "ADMIN", "ORGANIZER", "TEAM_MANAGER"))
+	mux.Handle("POST /v1/matches/{matchId}/ready", commandHandler(readyHandler, "OWNER", "ADMIN", "ORGANIZER", "TEAM_MANAGER"))
+	mux.Handle("POST /v1/matches/{matchId}/live-session", commandHandler(matchhttp.LiveSessionHandler(drafts), "OWNER", "ADMIN", "ORGANIZER", "TEAM_MANAGER", "SCORER", "REFEREE"))
+	mux.Handle("POST /v1/matches/{matchId}/events", commandHandler(matchhttp.AppendEventHandler(drafts), "OWNER", "ADMIN", "ORGANIZER", "TEAM_MANAGER", "SCORER", "REFEREE"))
+	mux.Handle("POST /v1/matches/{matchId}/events/{eventId}/reverse", commandHandler(matchhttp.ReverseEventHandler(drafts), "OWNER", "ADMIN", "ORGANIZER", "TEAM_MANAGER", "SCORER", "REFEREE"))
 	mux.Handle("GET /v1/matches/{matchId}/snapshot", matchhttp.SnapshotHandler(drafts))
 	mux.Handle("GET /v1/matches/{matchId}/events", matchhttp.ListEventsHandler(drafts))
 	// Match command handlers delegate domain and persistence work to internal/match.

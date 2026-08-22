@@ -16,6 +16,12 @@ type fakeVerifier struct {
 	err       error
 }
 
+type fakeMatchAuthorizer struct{ err error }
+
+func (authorizer fakeMatchAuthorizer) AuthorizeMatch(context.Context, string, string, ...string) error {
+	return authorizer.err
+}
+
 func (verifier fakeVerifier) Verify(context.Context, string) (Principal, error) {
 	return verifier.principal, verifier.err
 }
@@ -64,5 +70,16 @@ func TestMiddlewareRejectsVerifierFailure(t *testing.T) {
 	Middleware(fakeVerifier{err: errors.New("invalid")}, http.NotFoundHandler()).ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d", recorder.Code)
+	}
+}
+
+func TestRequireMatchRejectsForbiddenMembership(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/matches/22222222-2222-4222-8222-222222222222/events", nil)
+	request.Header.Set("Authorization", "Bearer valid")
+	secured := Middleware(fakeVerifier{principal: Principal{Subject: "user-1"}}, RequireMatch(fakeMatchAuthorizer{err: ErrForbidden}, []string{"SCORER"}, http.NotFoundHandler()))
+	secured.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", recorder.Code)
 	}
 }
