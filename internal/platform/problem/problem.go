@@ -11,7 +11,7 @@ type Problem struct {
 	TraceID string `json:"trace_id"`
 }
 
-//TODO(anshu): Need to add more types
+// TODO(anshu): Need to add more types
 func New(status int, title, detail, traceID string) Problem {
 	return Problem{Type: "https://api.footgrid.example/problems/" + title, Title: title, Status: status, Detail: detail, TraceID: traceID}
 }

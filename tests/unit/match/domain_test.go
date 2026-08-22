@@ -31,6 +31,66 @@ func TestApplyEventRejectsStaleSequence(t *testing.T) {
 	}
 }
 
+func TestApplyScoreAdjustmentChangesDerivedScore(t *testing.T) {
+	_, updated, err := match.ApplyEvent(match.Snapshot{Status: match.Live, EventSequence: 1, HomeScore: 2}, match.AppendEventCommand{
+		ClientEventID: "event-1", ExpectedSequence: 1, ActionCode: "SCORE_ADJUSTMENT", Side: match.Home,
+		Subjects:   []match.Subject{{Role: "PRIMARY", ParticipantID: "participant-1"}},
+		Qualifiers: map[string]any{"reason": "official correction", "score_delta": -1},
+	}, "server-event-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.HomeScore != 1 || updated.EventSequence != 2 {
+		t.Fatalf("unexpected adjusted snapshot: %#v", updated)
+	}
+}
+
+func TestApplyScoreAdjustmentRejectsUnderflow(t *testing.T) {
+	_, _, err := match.ApplyEvent(match.Snapshot{Status: match.Live, HomeScore: 0}, match.AppendEventCommand{
+		ClientEventID: "event-1", ActionCode: "SCORE_ADJUSTMENT", Side: match.Home,
+		Subjects:   []match.Subject{{Role: "PRIMARY", ParticipantID: "participant-1"}},
+		Qualifiers: map[string]any{"reason": "official correction", "score_delta": -1},
+	}, "server-event-1")
+	if !errors.Is(err, match.ErrScoreUnderflow) {
+		t.Fatalf("expected score underflow, got %v", err)
+	}
+}
+
+func TestStartLiveSessionRequiresReadyMatch(t *testing.T) {
+	if _, err := match.StartLiveSession(match.Snapshot{Status: match.Draft}); !errors.Is(err, match.ErrMatchNotReady) {
+		t.Fatalf("expected not-ready error, got %v", err)
+	}
+	snapshot, err := match.StartLiveSession(match.Snapshot{MatchID: "match-1", Status: match.Ready, EventSequence: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Status != match.Live || snapshot.EventSequence != 2 {
+		t.Fatalf("unexpected live snapshot: %#v", snapshot)
+	}
+}
+
+func TestReverseGoalAppendsCompensatingEvent(t *testing.T) {
+	snapshot := match.Snapshot{Status: match.Live, EventSequence: 4, HomeScore: 2, AwayScore: 1}
+	original := match.Event{ID: "goal-1", Sequence: 3, Command: match.AppendEventCommand{
+		ActionCode: "GOAL", Side: match.Home,
+		Subjects: []match.Subject{{Role: "SCORER", ParticipantID: "player-1"}},
+	}}
+	event, updated, err := match.ReverseEvent(snapshot, original, "reversal-1", "wrong scorer", "reversal-server-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event.Sequence != 5 || event.Command.ActionCode != "EVENT_REVERSAL" || updated.HomeScore != 1 || updated.EventSequence != 5 {
+		t.Fatalf("unexpected reversal: %#v %#v", event, updated)
+	}
+}
+
+func TestReverseRejectsNonScoringEvent(t *testing.T) {
+	_, _, err := match.ReverseEvent(match.Snapshot{Status: match.Live}, match.Event{Command: match.AppendEventCommand{ActionCode: "ASSIST", Side: match.Home}}, "reversal-1", "correction", "server-1")
+	if !errors.Is(err, match.ErrEventNotReversible) {
+		t.Fatalf("expected non-reversible error, got %v", err)
+	}
+}
+
 func TestSubstitutionRequiresBothParticipants(t *testing.T) {
 	err := (match.AppendEventCommand{ClientEventID: "event-1", ActionCode: "SUBSTITUTION", Side: match.Home, Subjects: []match.Subject{{Role: "PLAYER_ON", ParticipantID: "participant-1"}}}).Validate()
 	if err == nil {
