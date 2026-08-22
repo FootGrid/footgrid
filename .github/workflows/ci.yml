@@ -1,4 +1,4 @@
-name: CI
+name: FootGrid CI #TODO(anshu): Update once multiple workflows are integrated.
 
 on:
   pull_request:
@@ -8,6 +8,7 @@ on:
 permissions:
   contents: read
 
+#TODO(anshu): Add jobs 'build', 'deploy' 
 jobs:
   test:
     runs-on: ubuntu-latest
