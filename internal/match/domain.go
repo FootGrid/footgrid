@@ -3,6 +3,7 @@
 package match
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -102,21 +103,21 @@ func isUUID(value string) bool {
 }
 
 type Subject struct {
-	Role          string
-	ParticipantID string
+	Role          string `json:"role"`
+	ParticipantID string `json:"participant_id"`
 }
 
 type AppendEventCommand struct {
-	ClientEventID    string
-	ExpectedSequence int
-	ActionCode       string
-	Side             Side
-	Subjects         []Subject
-	Qualifiers       map[string]any
+	ClientEventID    string         `json:"client_event_id"`
+	ExpectedSequence int            `json:"expected_sequence"`
+	ActionCode       string         `json:"action_code"`
+	Side             Side           `json:"side"`
+	Subjects         []Subject      `json:"subjects"`
+	Qualifiers       map[string]any `json:"qualifiers,omitempty"`
 }
 
 func (command AppendEventCommand) Validate() error {
-	if command.ClientEventID == "" {
+	if strings.TrimSpace(command.ClientEventID) == "" {
 		return errors.New("client_event_id is required")
 	}
 	if command.ExpectedSequence < 0 {
@@ -130,10 +131,13 @@ func (command AppendEventCommand) Validate() error {
 	}
 	roles := map[string]bool{}
 	for _, subject := range command.Subjects {
-		if subject.ParticipantID == "" || subject.Role == "" {
+		if strings.TrimSpace(subject.ParticipantID) == "" || strings.TrimSpace(subject.Role) == "" {
 			return errors.New("event subject role and participant_id are required")
 		}
 		roles[subject.Role] = true
+	}
+	if command.ActionCode == "" {
+		return errors.New("action_code is required")
 	}
 	switch command.ActionCode {
 	case "GOAL":
@@ -145,7 +149,8 @@ func (command AppendEventCommand) Validate() error {
 			return errors.New("SUBSTITUTION requires PLAYER_ON and PLAYER_OFF")
 		}
 	case "SCORE_ADJUSTMENT":
-		if _, ok := command.Qualifiers["reason"].(string); !ok {
+		reason, ok := command.Qualifiers["reason"].(string)
+		if !ok || strings.TrimSpace(reason) == "" {
 			return errors.New("SCORE_ADJUSTMENT requires a reason")
 		}
 	}
@@ -156,6 +161,46 @@ type Event struct {
 	ID       string
 	Sequence int
 	Command  AppendEventCommand
+}
+
+func (event Event) ScoreDelta() int {
+	if event.Command.ActionCode == "GOAL" {
+		return 1
+	}
+	if event.Command.ActionCode == "SCORE_ADJUSTMENT" {
+		if delta, ok := event.Command.Qualifiers["score_delta"].(float64); ok {
+			return int(delta)
+		}
+	}
+	return 0
+}
+
+func (event Event) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		ID         string         `json:"id"`
+		Sequence   int            `json:"sequence"`
+		ActionCode string         `json:"action_code"`
+		Side       Side           `json:"side"`
+		Subjects   []Subject      `json:"subjects"`
+		Qualifiers map[string]any `json:"qualifiers,omitempty"`
+	}{event.ID, event.Sequence, event.Command.ActionCode, event.Command.Side, event.Command.Subjects, event.Command.Qualifiers})
+}
+
+func (event *Event) UnmarshalJSON(data []byte) error {
+	var value struct {
+		ID         string         `json:"id"`
+		Sequence   int            `json:"sequence"`
+		ActionCode string         `json:"action_code"`
+		Side       Side           `json:"side"`
+		Subjects   []Subject      `json:"subjects"`
+		Qualifiers map[string]any `json:"qualifiers,omitempty"`
+	}
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	event.ID, event.Sequence = value.ID, value.Sequence
+	event.Command = AppendEventCommand{ActionCode: value.ActionCode, Side: value.Side, Subjects: value.Subjects, Qualifiers: value.Qualifiers}
+	return nil
 }
 
 type Snapshot struct {
@@ -169,6 +214,8 @@ type Snapshot struct {
 var ErrSequenceConflict = errors.New("match event sequence conflict")
 var ErrMatchNotLive = errors.New("match is not live")
 var ErrMatchNotReady = errors.New("match is not ready")
+var ErrEventNotReversible = errors.New("event is not reversible")
+var ErrEventAlreadyReversed = errors.New("event has already been reversed")
 
 // StartLiveSession performs the only legal transition into live scoring.
 func StartLiveSession(snapshot Snapshot) (Snapshot, error) {
@@ -201,4 +248,35 @@ func ApplyEvent(snapshot Snapshot, command AppendEventCommand, eventID string) (
 		}
 	}
 	return Event{ID: eventID, Sequence: snapshot.EventSequence, Command: command}, snapshot, nil
+}
+
+// ReverseEvent creates a compensating event without mutating the original.
+func ReverseEvent(snapshot Snapshot, original Event, clientEventID, reason, reversalID string) (Event, Snapshot, error) {
+	if snapshot.Status != Live {
+		return Event{}, Snapshot{}, ErrMatchNotLive
+	}
+	if strings.TrimSpace(reason) == "" {
+		return Event{}, Snapshot{}, errors.New("reversal reason is required")
+	}
+	delta := original.ScoreDelta()
+	if delta == 0 {
+		return Event{}, Snapshot{}, ErrEventNotReversible
+	}
+	if original.Command.Side == Home && snapshot.HomeScore < delta || original.Command.Side == Away && snapshot.AwayScore < delta {
+		return Event{}, Snapshot{}, errors.New("reversal would make the score negative")
+	}
+	snapshot.EventSequence++
+	if original.Command.Side == Home {
+		snapshot.HomeScore -= delta
+	} else {
+		snapshot.AwayScore -= delta
+	}
+	return Event{ID: reversalID, Sequence: snapshot.EventSequence, Command: AppendEventCommand{
+		ClientEventID:    clientEventID,
+		ExpectedSequence: snapshot.EventSequence - 1,
+		ActionCode:       "EVENT_REVERSAL",
+		Side:             original.Command.Side,
+		Subjects:         original.Command.Subjects,
+		Qualifiers:       map[string]any{"reason": reason, "reverses_event_id": original.ID},
+	}}, snapshot, nil
 }

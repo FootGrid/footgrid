@@ -369,3 +369,259 @@ func (repository *PostgresRepository) StartLiveSession(ctx context.Context, matc
 	}
 	return snapshot, nil
 }
+
+func (repository *PostgresRepository) Append(ctx context.Context, matchID string, command AppendEventCommand, idempotency Idempotency) (Event, Snapshot, error) {
+	if !isUUID(matchID) {
+		return Event{}, Snapshot{}, invalidMatchInput("match_id must be a UUID")
+	}
+	if err := command.Validate(); err != nil {
+		return Event{}, Snapshot{}, invalidMatchInput(err.Error())
+	}
+	if !isUUID(command.ClientEventID) {
+		return Event{}, Snapshot{}, invalidMatchInput("client_event_id must be a UUID")
+	}
+	if err := idempotency.Validate(); err != nil {
+		return Event{}, Snapshot{}, err
+	}
+	scope := "matches:event:" + matchID + ":" + command.ClientEventID
+	tx, err := repository.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return Event{}, Snapshot{}, fmt.Errorf("begin append transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `DELETE FROM platform.idempotency_records WHERE scope = $1 AND idempotency_key = $2 AND expires_at <= clock_timestamp()`, scope, idempotency.Key); err != nil {
+		return Event{}, Snapshot{}, fmt.Errorf("remove expired event idempotency record: %w", err)
+	}
+	reserved, err := reserveIdempotencyKey(ctx, tx, scope, idempotency)
+	if err != nil {
+		return Event{}, Snapshot{}, err
+	}
+	var snapshot Snapshot
+	var status string
+	if err := tx.QueryRow(ctx, `SELECT m.status::text, l.current_sequence, l.home_score, l.away_score FROM match_data.matches m JOIN match_data.match_live_state l ON l.match_id = m.id WHERE m.id = $1::uuid FOR UPDATE OF m, l`, matchID).Scan(&status, &snapshot.EventSequence, &snapshot.HomeScore, &snapshot.AwayScore); err != nil {
+		return Event{}, Snapshot{}, fmt.Errorf("lock match for event append: %w", err)
+	}
+	snapshot.MatchID, snapshot.Status = matchID, Status(status)
+	if !reserved {
+		var requestHash, response []byte
+		var responseStatus int
+		if err := tx.QueryRow(ctx, `SELECT request_hash, response_status, response_body FROM platform.idempotency_records WHERE scope = $1 AND idempotency_key = $2`, scope, idempotency.Key).Scan(&requestHash, &responseStatus, &response); err != nil {
+			return Event{}, Snapshot{}, fmt.Errorf("read event idempotency record: %w", err)
+		}
+		if !bytes.Equal(requestHash, idempotency.RequestHash) {
+			return Event{}, Snapshot{}, ErrIdempotencyConflict
+		}
+		var stored struct {
+			Event    Event    `json:"event"`
+			Snapshot Snapshot `json:"snapshot"`
+		}
+		if err := json.Unmarshal(response, &stored); err != nil {
+			return Event{}, Snapshot{}, fmt.Errorf("decode stored event response: %w", err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return Event{}, Snapshot{}, fmt.Errorf("commit idempotent event read: %w", err)
+		}
+		return stored.Event, stored.Snapshot, nil
+	}
+	var participantCount int
+	participantIDs := make([]string, 0, len(command.Subjects))
+	for _, subject := range command.Subjects {
+		if !isUUID(subject.ParticipantID) {
+			return Event{}, Snapshot{}, invalidMatchInput("event subject participant_id must be a UUID")
+		}
+		participantIDs = append(participantIDs, subject.ParticipantID)
+	}
+	if err := tx.QueryRow(ctx, `SELECT count(DISTINCT id) FROM match_data.match_participants WHERE match_id = $1::uuid AND id = ANY($2::uuid[])`, matchID, participantIDs).Scan(&participantCount); err != nil {
+		return Event{}, Snapshot{}, fmt.Errorf("validate event subjects: %w", err)
+	}
+	if participantCount != len(mapUnique(participantIDs)) {
+		return Event{}, Snapshot{}, invalidMatchInput("all event subjects must belong to the match roster")
+	}
+	eventID, err := newUUID(ctx, tx)
+	if err != nil {
+		return Event{}, Snapshot{}, err
+	}
+	event, updated, err := ApplyEvent(snapshot, command, eventID)
+	if err != nil {
+		return Event{}, Snapshot{}, err
+	}
+	qualifiers, err := json.Marshal(command.Qualifiers)
+	if err != nil {
+		return Event{}, Snapshot{}, fmt.Errorf("encode event qualifiers: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO match_data.match_events (id, match_id, client_event_id, sequence, action_code, side, qualifiers) VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7::jsonb)`, event.ID, matchID, command.ClientEventID, event.Sequence, command.ActionCode, command.Side, qualifiers); err != nil {
+		return Event{}, Snapshot{}, fmt.Errorf("insert match event: %w", err)
+	}
+	for ordinal, subject := range command.Subjects {
+		if _, err := tx.Exec(ctx, `INSERT INTO match_data.match_event_subjects (match_id, event_id, participant_id, role, ordinal) VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5)`, matchID, event.ID, subject.ParticipantID, subject.Role, ordinal+1); err != nil {
+			return Event{}, Snapshot{}, fmt.Errorf("insert event subject: %w", err)
+		}
+	}
+	if _, err := tx.Exec(ctx, `UPDATE match_data.match_live_state SET current_sequence = $2, home_score = $3, away_score = $4, updated_at = clock_timestamp() WHERE match_id = $1::uuid`, matchID, updated.EventSequence, updated.HomeScore, updated.AwayScore); err != nil {
+		return Event{}, Snapshot{}, fmt.Errorf("update live snapshot: %w", err)
+	}
+	response, err := json.Marshal(struct {
+		Event    Event    `json:"event"`
+		Snapshot Snapshot `json:"snapshot"`
+	}{event, updated})
+	if err != nil {
+		return Event{}, Snapshot{}, fmt.Errorf("encode event response: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO platform.outbox_events (aggregate_type, aggregate_id, aggregate_sequence, event_type, payload) VALUES ('match', $1::uuid, $2, 'match.event-recorded.v1', $3::jsonb)`, matchID, event.Sequence, response); err != nil {
+		return Event{}, Snapshot{}, fmt.Errorf("enqueue match event: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE platform.idempotency_records SET response_status = 201, response_body = $3::jsonb WHERE scope = $1 AND idempotency_key = $2`, scope, idempotency.Key, response); err != nil {
+		return Event{}, Snapshot{}, fmt.Errorf("save event response: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Event{}, Snapshot{}, fmt.Errorf("commit event append: %w", err)
+	}
+	return event, updated, nil
+}
+
+func (repository *PostgresRepository) Reverse(ctx context.Context, matchID, eventID, clientEventID string, expectedSequence int, reason string, idempotency Idempotency) (Event, Snapshot, error) {
+	if !isUUID(matchID) || !isUUID(eventID) || !isUUID(clientEventID) {
+		return Event{}, Snapshot{}, invalidMatchInput("match_id, event_id, and client_event_id must be UUIDs")
+	}
+	if expectedSequence < 0 || len(strings.TrimSpace(reason)) < 3 || len(reason) > 500 {
+		return Event{}, Snapshot{}, invalidMatchInput("expected_sequence or reversal reason is invalid")
+	}
+	if err := idempotency.Validate(); err != nil {
+		return Event{}, Snapshot{}, err
+	}
+	scope := "matches:reversal:" + matchID + ":" + clientEventID
+	tx, err := repository.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return Event{}, Snapshot{}, fmt.Errorf("begin reversal transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `DELETE FROM platform.idempotency_records WHERE scope = $1 AND idempotency_key = $2 AND expires_at <= clock_timestamp()`, scope, idempotency.Key); err != nil {
+		return Event{}, Snapshot{}, fmt.Errorf("remove expired reversal idempotency record: %w", err)
+	}
+	reserved, err := reserveIdempotencyKey(ctx, tx, scope, idempotency)
+	if err != nil {
+		return Event{}, Snapshot{}, err
+	}
+	if !reserved {
+		var requestHash, response []byte
+		var responseStatus int
+		if err := tx.QueryRow(ctx, `SELECT request_hash, response_status, response_body FROM platform.idempotency_records WHERE scope = $1 AND idempotency_key = $2`, scope, idempotency.Key).Scan(&requestHash, &responseStatus, &response); err != nil {
+			return Event{}, Snapshot{}, fmt.Errorf("read reversal idempotency record: %w", err)
+		}
+		if !bytes.Equal(requestHash, idempotency.RequestHash) {
+			return Event{}, Snapshot{}, ErrIdempotencyConflict
+		}
+		var stored struct {
+			Event    Event    `json:"event"`
+			Snapshot Snapshot `json:"snapshot"`
+		}
+		if err := json.Unmarshal(response, &stored); err != nil {
+			return Event{}, Snapshot{}, fmt.Errorf("decode stored reversal response: %w", err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return Event{}, Snapshot{}, fmt.Errorf("commit idempotent reversal read: %w", err)
+		}
+		return stored.Event, stored.Snapshot, nil
+	}
+	var snapshot Snapshot
+	var status string
+	if err := tx.QueryRow(ctx, `SELECT m.status::text, l.current_sequence, l.home_score, l.away_score FROM match_data.matches m JOIN match_data.match_live_state l ON l.match_id = m.id WHERE m.id = $1::uuid FOR UPDATE OF m, l`, matchID).Scan(&status, &snapshot.EventSequence, &snapshot.HomeScore, &snapshot.AwayScore); err != nil {
+		return Event{}, Snapshot{}, fmt.Errorf("lock match for reversal: %w", err)
+	}
+	snapshot.MatchID, snapshot.Status = matchID, Status(status)
+	if snapshot.EventSequence != expectedSequence {
+		return Event{}, Snapshot{}, ErrSequenceConflict
+	}
+	var actionCode string
+	var side Side
+	var qualifiers []byte
+	if err := tx.QueryRow(ctx, `SELECT action_code, side, qualifiers FROM match_data.match_events WHERE id = $1::uuid AND match_id = $2::uuid`, eventID, matchID).Scan(&actionCode, &side, &qualifiers); err != nil {
+		return Event{}, Snapshot{}, fmt.Errorf("find event to reverse: %w", err)
+	}
+	var alreadyReversed bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM match_data.event_reversals WHERE reversed_event_id = $1::uuid)`, eventID).Scan(&alreadyReversed); err != nil {
+		return Event{}, Snapshot{}, fmt.Errorf("check event reversal: %w", err)
+	}
+	if alreadyReversed {
+		return Event{}, Snapshot{}, ErrEventAlreadyReversed
+	}
+	var originalQualifiers map[string]any
+	if err := json.Unmarshal(qualifiers, &originalQualifiers); err != nil {
+		return Event{}, Snapshot{}, fmt.Errorf("decode original event qualifiers: %w", err)
+	}
+	rows, err := tx.Query(ctx, `SELECT role, participant_id::text FROM match_data.match_event_subjects WHERE event_id = $1::uuid AND match_id = $2::uuid ORDER BY role, ordinal`, eventID, matchID)
+	if err != nil {
+		return Event{}, Snapshot{}, fmt.Errorf("read original event subjects: %w", err)
+	}
+	var subjects []Subject
+	for rows.Next() {
+		var subject Subject
+		if err := rows.Scan(&subject.Role, &subject.ParticipantID); err != nil {
+			rows.Close()
+			return Event{}, Snapshot{}, fmt.Errorf("scan original event subject: %w", err)
+		}
+		subjects = append(subjects, subject)
+	}
+	rows.Close()
+	original := Event{ID: eventID, Command: AppendEventCommand{ActionCode: actionCode, Side: side, Subjects: subjects, Qualifiers: originalQualifiers}}
+	event, updated, err := ReverseEvent(snapshot, original, clientEventID, strings.TrimSpace(reason), "")
+	if err != nil {
+		return Event{}, Snapshot{}, err
+	}
+	event.ID, err = newUUID(ctx, tx)
+	if err != nil {
+		return Event{}, Snapshot{}, err
+	}
+	event.Command.ExpectedSequence = expectedSequence
+	reversalQualifiers, err := json.Marshal(event.Command.Qualifiers)
+	if err != nil {
+		return Event{}, Snapshot{}, fmt.Errorf("encode reversal qualifiers: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO match_data.match_events (id, match_id, client_event_id, sequence, action_code, side, qualifiers) VALUES ($1::uuid, $2::uuid, $3::uuid, $4, 'EVENT_REVERSAL', $5, $6::jsonb)`, event.ID, matchID, clientEventID, event.Sequence, side, reversalQualifiers); err != nil {
+		return Event{}, Snapshot{}, fmt.Errorf("insert reversal event: %w", err)
+	}
+	for ordinal, subject := range subjects {
+		if _, err := tx.Exec(ctx, `INSERT INTO match_data.match_event_subjects (match_id, event_id, participant_id, role, ordinal) VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5)`, matchID, event.ID, subject.ParticipantID, subject.Role, ordinal+1); err != nil {
+			return Event{}, Snapshot{}, fmt.Errorf("insert reversal subject: %w", err)
+		}
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO match_data.event_reversals (reversal_event_id, reversed_event_id, reason) VALUES ($1::uuid, $2::uuid, $3)`, event.ID, eventID, strings.TrimSpace(reason)); err != nil {
+		return Event{}, Snapshot{}, fmt.Errorf("link reversal event: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE match_data.match_live_state SET current_sequence = $2, home_score = $3, away_score = $4, updated_at = clock_timestamp() WHERE match_id = $1::uuid`, matchID, updated.EventSequence, updated.HomeScore, updated.AwayScore); err != nil {
+		return Event{}, Snapshot{}, fmt.Errorf("update reversed snapshot: %w", err)
+	}
+	response, err := json.Marshal(struct {
+		Event    Event    `json:"event"`
+		Snapshot Snapshot `json:"snapshot"`
+	}{event, updated})
+	if err != nil {
+		return Event{}, Snapshot{}, fmt.Errorf("encode reversal response: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO platform.outbox_events (aggregate_type, aggregate_id, aggregate_sequence, event_type, payload) VALUES ('match', $1::uuid, $2, 'match.event-reversed.v1', $3::jsonb)`, matchID, event.Sequence, response); err != nil {
+		return Event{}, Snapshot{}, fmt.Errorf("enqueue reversal event: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE platform.idempotency_records SET response_status = 201, response_body = $3::jsonb WHERE scope = $1 AND idempotency_key = $2`, scope, idempotency.Key, response); err != nil {
+		return Event{}, Snapshot{}, fmt.Errorf("save reversal response: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Event{}, Snapshot{}, fmt.Errorf("commit reversal: %w", err)
+	}
+	return event, updated, nil
+}
+
+func newUUID(ctx context.Context, tx pgx.Tx) (string, error) {
+	var id string
+	if err := tx.QueryRow(ctx, `SELECT gen_random_uuid()::text`).Scan(&id); err != nil {
+		return "", fmt.Errorf("generate event ID: %w", err)
+	}
+	return id, nil
+}
+
+func mapUnique(values []string) map[string]struct{} {
+	unique := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		unique[value] = struct{}{}
+	}
+	return unique
+}

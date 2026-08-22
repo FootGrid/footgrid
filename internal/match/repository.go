@@ -16,8 +16,8 @@ type Repository interface {
 	SetInitialLineups(ctx context.Context, matchID string, homeStarterIDs, awayStarterIDs []string, idempotency Idempotency) (Roster, error)
 	MarkReady(ctx context.Context, matchID string, idempotency Idempotency) (Match, error)
 	StartLiveSession(ctx context.Context, matchID string, idempotency Idempotency) (Snapshot, error)
-	Append(ctx context.Context, matchID string, command AppendEventCommand) (Event, Snapshot, error)
-	Reverse(ctx context.Context, matchID, eventID, clientEventID string, expectedSequence int, reason string) (Event, Snapshot, error)
+	Append(ctx context.Context, matchID string, command AppendEventCommand, idempotency Idempotency) (Event, Snapshot, error)
+	Reverse(ctx context.Context, matchID, eventID, clientEventID string, expectedSequence int, reason string, idempotency Idempotency) (Event, Snapshot, error)
 }
 
 // SetupRepository is the narrow dependency for draft setup commands.
@@ -31,6 +31,14 @@ type SetupRepository interface {
 // DraftCreator is the narrow dependency used by the create-match HTTP handler.
 type DraftCreator interface {
 	Create(ctx context.Context, input CreateInput, idempotency Idempotency) (Match, error)
+}
+
+type EventAppender interface {
+	Append(ctx context.Context, matchID string, command AppendEventCommand, idempotency Idempotency) (Event, Snapshot, error)
+}
+
+type EventReverser interface {
+	Reverse(ctx context.Context, matchID, eventID, clientEventID string, expectedSequence int, reason string, idempotency Idempotency) (Event, Snapshot, error)
 }
 
 type Idempotency struct {
