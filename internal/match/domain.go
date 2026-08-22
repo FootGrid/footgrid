@@ -170,6 +170,11 @@ func (command AppendEventCommand) Validate() error {
 		if strings.TrimSpace(subject.ParticipantID) == "" || strings.TrimSpace(subject.Role) == "" {
 			return errors.New("event subject role and participant_id are required")
 		}
+		switch subject.Role {
+		case "PRIMARY", "SCORER", "ASSISTER", "OPPONENT", "PLAYER_ON", "PLAYER_OFF":
+		default:
+			return fmt.Errorf("unsupported event subject role %s", subject.Role)
+		}
 		roles[subject.Role] = true
 	}
 	if command.ActionCode == "" {

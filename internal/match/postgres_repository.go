@@ -342,8 +342,15 @@ func (repository *PostgresRepository) ReplaceRoster(ctx context.Context, matchID
 		return result, nil
 	}
 	var playersPerSide int
-	if err := tx.QueryRow(ctx, `SELECT players_per_side FROM match_data.matches WHERE id = $1::uuid AND status = 'DRAFT' FOR UPDATE`, matchID).Scan(&playersPerSide); err != nil {
+	var status Status
+	if err := tx.QueryRow(ctx, `SELECT players_per_side, status FROM match_data.matches WHERE id = $1::uuid FOR UPDATE`, matchID).Scan(&playersPerSide, &status); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Roster{}, ErrMatchNotFound
+		}
 		return Roster{}, fmt.Errorf("lock draft for roster: %w", err)
+	}
+	if status != Draft {
+		return Roster{}, ErrMatchNotDraft
 	}
 	if err := roster.Validate(playersPerSide); err != nil {
 		return Roster{}, invalidMatchInput(err.Error())
@@ -352,8 +359,12 @@ func (repository *PostgresRepository) ReplaceRoster(ctx context.Context, matchID
 		return Roster{}, fmt.Errorf("clear roster: %w", err)
 	}
 	for _, participant := range append(append([]Participant{}, roster.Home...), roster.Away...) {
-		if _, err := tx.Exec(ctx, `INSERT INTO match_data.match_participants (id, match_id, match_side_id, shirt_number, display_name_snapshot, position_code, participation_status) SELECT $1::uuid, $2::uuid, id, $3, $4, NULLIF($5, ''), 'NOT_SELECTED' FROM match_data.match_sides WHERE match_id = $2::uuid AND side = $6`, participant.ID, matchID, participant.ShirtNumber, strings.TrimSpace(participant.DisplayName), strings.TrimSpace(participant.PositionCode), participant.Side); err != nil {
+		commandTag, err := tx.Exec(ctx, `INSERT INTO match_data.match_participants (id, match_id, match_side_id, shirt_number, display_name_snapshot, position_code, participation_status) SELECT $1::uuid, $2::uuid, id, $3, $4, NULLIF($5, ''), 'NOT_SELECTED' FROM match_data.match_sides WHERE match_id = $2::uuid AND side = $6`, participant.ID, matchID, participant.ShirtNumber, strings.TrimSpace(participant.DisplayName), strings.TrimSpace(participant.PositionCode), participant.Side)
+		if err != nil {
 			return Roster{}, fmt.Errorf("insert roster participant: %w", err)
+		}
+		if commandTag.RowsAffected() != 1 {
+			return Roster{}, invalidMatchInput(fmt.Sprintf("participant %s does not belong to this match", participant.ID))
 		}
 	}
 	result, err := loadRoster(ctx, tx, matchID)
@@ -405,8 +416,15 @@ func (repository *PostgresRepository) SetInitialLineups(ctx context.Context, mat
 		}
 	}
 	var playersPerSide int
-	if err := tx.QueryRow(ctx, `SELECT players_per_side FROM match_data.matches WHERE id = $1::uuid AND status = 'DRAFT' FOR UPDATE`, matchID).Scan(&playersPerSide); err != nil {
+	var status Status
+	if err := tx.QueryRow(ctx, `SELECT players_per_side, status FROM match_data.matches WHERE id = $1::uuid FOR UPDATE`, matchID).Scan(&playersPerSide, &status); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Roster{}, ErrMatchNotFound
+		}
 		return Roster{}, fmt.Errorf("lock draft for lineups: %w", err)
+	}
+	if status != Draft {
+		return Roster{}, ErrMatchNotDraft
 	}
 	if len(homeStarterIDs) != playersPerSide || len(awayStarterIDs) != playersPerSide {
 		return Roster{}, invalidMatchInput(fmt.Sprintf("each lineup requires %d starters", playersPerSide))
@@ -505,14 +523,21 @@ func (repository *PostgresRepository) MarkReady(ctx context.Context, matchID str
 		return result, nil
 	}
 	var playersPerSide int
-	if err := tx.QueryRow(ctx, `SELECT players_per_side FROM match_data.matches WHERE id = $1::uuid AND status = 'DRAFT' FOR UPDATE`, matchID).Scan(&playersPerSide); err != nil {
+	var status Status
+	if err := tx.QueryRow(ctx, `SELECT players_per_side, status FROM match_data.matches WHERE id = $1::uuid FOR UPDATE`, matchID).Scan(&playersPerSide, &status); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Match{}, ErrMatchNotFound
+		}
 		return Match{}, fmt.Errorf("lock draft for ready: %w", err)
 	}
-	var starterCount int
-	if err := tx.QueryRow(ctx, `SELECT count(*) FROM match_data.match_participants WHERE match_id = $1::uuid AND participation_status = 'STARTER'`, matchID).Scan(&starterCount); err != nil {
+	if status != Draft {
+		return Match{}, ErrMatchNotDraft
+	}
+	var homeStarterCount, awayStarterCount int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FILTER (WHERE s.side = 'HOME'), count(*) FILTER (WHERE s.side = 'AWAY') FROM match_data.match_participants p JOIN match_data.match_sides s ON s.id = p.match_side_id WHERE p.match_id = $1::uuid AND p.participation_status = 'STARTER'`, matchID).Scan(&homeStarterCount, &awayStarterCount); err != nil {
 		return Match{}, err
 	}
-	if starterCount != playersPerSide*2 {
+	if homeStarterCount != playersPerSide || awayStarterCount != playersPerSide {
 		return Match{}, invalidMatchInput("both initial lineups are required")
 	}
 	if _, err := tx.Exec(ctx, `UPDATE match_data.matches SET status = 'READY', status_version = status_version + 1 WHERE id = $1::uuid`, matchID); err != nil {
@@ -577,6 +602,9 @@ func (repository *PostgresRepository) StartLiveSession(ctx context.Context, matc
 	var status string
 	var playersPerSide int
 	if err := tx.QueryRow(ctx, `SELECT m.status::text, m.players_per_side, l.current_sequence, l.home_score, l.away_score FROM match_data.matches m JOIN match_data.match_live_state l ON l.match_id = m.id WHERE m.id = $1::uuid FOR UPDATE OF m, l`, matchID).Scan(&status, &playersPerSide, &snapshot.EventSequence, &snapshot.HomeScore, &snapshot.AwayScore); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Snapshot{}, ErrMatchNotFound
+		}
 		return Snapshot{}, fmt.Errorf("lock match for live session: %w", err)
 	}
 	snapshot.MatchID, snapshot.Status = matchID, Status(status)
@@ -644,6 +672,9 @@ func (repository *PostgresRepository) Append(ctx context.Context, matchID string
 	var snapshot Snapshot
 	var status string
 	if err := tx.QueryRow(ctx, `SELECT m.status::text, l.current_sequence, l.home_score, l.away_score FROM match_data.matches m JOIN match_data.match_live_state l ON l.match_id = m.id WHERE m.id = $1::uuid FOR UPDATE OF m, l`, matchID).Scan(&status, &snapshot.EventSequence, &snapshot.HomeScore, &snapshot.AwayScore); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Event{}, Snapshot{}, ErrMatchNotFound
+		}
 		return Event{}, Snapshot{}, fmt.Errorf("lock match for event append: %w", err)
 	}
 	snapshot.MatchID, snapshot.Status = matchID, Status(status)
@@ -681,6 +712,16 @@ func (repository *PostgresRepository) Append(ctx context.Context, matchID string
 	}
 	if participantCount != len(mapUnique(participantIDs)) {
 		return Event{}, Snapshot{}, invalidMatchInput("all event subjects must belong to the match roster")
+	}
+	for _, subject := range command.Subjects {
+		var participantSide Side
+		if err := tx.QueryRow(ctx, `SELECT s.side FROM match_data.match_participants p JOIN match_data.match_sides s ON s.id = p.match_side_id WHERE p.match_id = $1::uuid AND p.id = $2::uuid`, matchID, subject.ParticipantID).Scan(&participantSide); err != nil {
+			return Event{}, Snapshot{}, fmt.Errorf("read event subject side: %w", err)
+		}
+		isOpponent := subject.Role == "OPPONENT"
+		if (isOpponent && participantSide == command.Side) || (!isOpponent && participantSide != command.Side) {
+			return Event{}, Snapshot{}, invalidMatchInput(fmt.Sprintf("event subject %s is on the wrong side", subject.ParticipantID))
+		}
 	}
 	eventID, err := newUUID(ctx, tx)
 	if err != nil {
@@ -771,6 +812,9 @@ func (repository *PostgresRepository) Reverse(ctx context.Context, matchID, even
 	var snapshot Snapshot
 	var status string
 	if err := tx.QueryRow(ctx, `SELECT m.status::text, l.current_sequence, l.home_score, l.away_score FROM match_data.matches m JOIN match_data.match_live_state l ON l.match_id = m.id WHERE m.id = $1::uuid FOR UPDATE OF m, l`, matchID).Scan(&status, &snapshot.EventSequence, &snapshot.HomeScore, &snapshot.AwayScore); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Event{}, Snapshot{}, ErrMatchNotFound
+		}
 		return Event{}, Snapshot{}, fmt.Errorf("lock match for reversal: %w", err)
 	}
 	snapshot.MatchID, snapshot.Status = matchID, Status(status)
@@ -781,6 +825,9 @@ func (repository *PostgresRepository) Reverse(ctx context.Context, matchID, even
 	var side Side
 	var qualifiers []byte
 	if err := tx.QueryRow(ctx, `SELECT action_code, side, qualifiers FROM match_data.match_events WHERE id = $1::uuid AND match_id = $2::uuid`, eventID, matchID).Scan(&actionCode, &side, &qualifiers); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Event{}, Snapshot{}, ErrEventNotFound
+		}
 		return Event{}, Snapshot{}, fmt.Errorf("find event to reverse: %w", err)
 	}
 	var alreadyReversed bool
