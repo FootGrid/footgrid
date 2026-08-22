@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -736,6 +737,10 @@ func (repository *PostgresRepository) Append(ctx context.Context, matchID string
 		return Event{}, Snapshot{}, fmt.Errorf("encode event qualifiers: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO match_data.match_events (id, match_id, client_event_id, sequence, action_code, side, qualifiers) VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7::jsonb)`, event.ID, matchID, command.ClientEventID, event.Sequence, command.ActionCode, command.Side, qualifiers); err != nil {
+		var postgresError *pgconn.PgError
+		if errors.As(err, &postgresError) && postgresError.Code == "23505" && strings.Contains(postgresError.ConstraintName, "client_event") {
+			return Event{}, Snapshot{}, ErrEventAlreadyExists
+		}
 		return Event{}, Snapshot{}, fmt.Errorf("insert match event: %w", err)
 	}
 	for ordinal, subject := range command.Subjects {

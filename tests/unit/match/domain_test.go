@@ -84,6 +84,22 @@ func TestReverseGoalAppendsCompensatingEvent(t *testing.T) {
 	}
 }
 
+func TestReverseNegativeScoreAdjustmentRestoresScore(t *testing.T) {
+	snapshot := match.Snapshot{Status: match.Live, EventSequence: 2, HomeScore: 1, AwayScore: 0}
+	original := match.Event{ID: "adjustment-1", Sequence: 2, Command: match.AppendEventCommand{
+		ActionCode: "SCORE_ADJUSTMENT", Side: match.Home,
+		Subjects:   []match.Subject{{Role: "PRIMARY", ParticipantID: "operator-1"}},
+		Qualifiers: map[string]any{"reason": "official correction", "score_delta": -1},
+	}}
+	_, updated, err := match.ReverseEvent(snapshot, original, "reversal-1", "adjustment was incorrect", "reversal-server-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.HomeScore != 2 || updated.EventSequence != 3 {
+		t.Fatalf("expected score adjustment reversal to restore score, got %#v", updated)
+	}
+}
+
 func TestReverseRejectsNonScoringEvent(t *testing.T) {
 	_, _, err := match.ReverseEvent(match.Snapshot{Status: match.Live}, match.Event{Command: match.AppendEventCommand{ActionCode: "ASSIST", Side: match.Home}}, "reversal-1", "correction", "server-1")
 	if !errors.Is(err, match.ErrEventNotReversible) {
@@ -95,6 +111,37 @@ func TestSubstitutionRequiresBothParticipants(t *testing.T) {
 	err := (match.AppendEventCommand{ClientEventID: "event-1", ActionCode: "SUBSTITUTION", Side: match.Home, Subjects: []match.Subject{{Role: "PLAYER_ON", ParticipantID: "participant-1"}}}).Validate()
 	if err == nil {
 		t.Fatal("expected validation failure")
+	}
+}
+
+func TestAppendEventRejectsUnsupportedAction(t *testing.T) {
+	err := (match.AppendEventCommand{
+		ClientEventID: "event-1", ActionCode: "NOT_A_LOGGER_ACTION", Side: match.Home,
+		Subjects: []match.Subject{{Role: "PRIMARY", ParticipantID: "participant-1"}},
+	}).Validate()
+	if err == nil {
+		t.Fatal("expected unsupported action to be rejected")
+	}
+}
+
+func TestGoalRejectsInvalidFinishType(t *testing.T) {
+	err := (match.AppendEventCommand{
+		ClientEventID: "event-1", ActionCode: "GOAL", Side: match.Home,
+		Subjects:   []match.Subject{{Role: "SCORER", ParticipantID: "participant-1"}},
+		Qualifiers: map[string]any{"finish_type": "BACKHEEL"},
+	}).Validate()
+	if err == nil {
+		t.Fatal("expected invalid goal finish type to be rejected")
+	}
+}
+
+func TestContestedActionAllowsUnknownOpponent(t *testing.T) {
+	err := (match.AppendEventCommand{
+		ClientEventID: "event-1", ActionCode: "DUEL_WON", Side: match.Home,
+		Subjects: []match.Subject{{Role: "PRIMARY", ParticipantID: "participant-1"}},
+	}).Validate()
+	if err != nil {
+		t.Fatalf("expected contested action without opponent to be valid, got %v", err)
 	}
 }
 

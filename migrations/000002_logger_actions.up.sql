@@ -1,0 +1,26 @@
+INSERT INTO match_data.action_catalog (code, version, display_label, required_subject_roles)
+VALUES
+  ('SHOT_OFF_TARGET', 1, 'Shot off target', ARRAY['PRIMARY']),
+  ('SHOT_OFF_POST', 1, 'Off the post', ARRAY['PRIMARY']),
+  ('CHANCE_CREATED', 1, 'Chance created', ARRAY['PRIMARY']),
+  ('AERIAL_WON', 1, 'Aerial won', ARRAY['PRIMARY', 'OPPONENT']),
+  ('AERIAL_LOST', 1, 'Aerial lost', ARRAY['PRIMARY', 'OPPONENT']),
+  ('DRIBBLE_WON', 1, 'Beat his man', ARRAY['PRIMARY', 'OPPONENT']),
+  ('CROSS', 1, 'Cross', ARRAY['PRIMARY']),
+  ('LOST_BALL', 1, 'Lost the ball', ARRAY['PRIMARY']),
+  ('KEY_PASS', 1, 'Key pass', ARRAY['PRIMARY']),
+  ('RECOVERY', 1, 'Recovery', ARRAY['PRIMARY']),
+  ('BLOCK', 1, 'Block', ARRAY['PRIMARY']),
+  ('DUEL_WON', 1, 'Duel won', ARRAY['PRIMARY', 'OPPONENT']),
+  ('DUEL_LOST', 1, 'Duel lost', ARRAY['PRIMARY', 'OPPONENT']),
+  ('DRIBBLED_PAST', 1, 'Dribbled past', ARRAY['PRIMARY', 'OPPONENT']),
+  ('CLEARANCE', 1, 'Clearance', ARRAY['PRIMARY']),
+  ('HEADER_CLEARED', 1, 'Header cleared', ARRAY['PRIMARY']),
+  ('GOALKEEPER_DIVING_SAVE', 1, 'Diving save', ARRAY['PRIMARY']),
+  ('GOALKEEPER_CLAIM', 1, 'Claim', ARRAY['PRIMARY']),
+  ('GOALKEEPER_PUNCH', 1, 'Punch', ARRAY['PRIMARY']),
+  ('GOALKEEPER_SWEEP', 1, 'Sweep', ARRAY['PRIMARY']),
+  ('GOAL_CONCEDED', 1, 'Goal conceded', ARRAY['PRIMARY']),
+  ('DISTRIBUTION_LONG', 1, 'Long kick', ARRAY['PRIMARY']),
+  ('DISTRIBUTION_SHORT', 1, 'Short distribution', ARRAY['PRIMARY'])
+ON CONFLICT (code, version) DO NOTHING;
