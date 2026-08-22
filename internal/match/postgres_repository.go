@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -85,6 +86,81 @@ func (repository *PostgresRepository) Create(ctx context.Context, input CreateIn
 		return Match{}, fmt.Errorf("commit draft creation: %w", err)
 	}
 	return match, nil
+}
+
+func (repository *PostgresRepository) GetSnapshot(ctx context.Context, matchID string) (Snapshot, error) {
+	if !isUUID(matchID) {
+		return Snapshot{}, invalidMatchInput("match_id must be a UUID")
+	}
+	var snapshot Snapshot
+	var status string
+	err := repository.pool.QueryRow(ctx, `SELECT m.status::text, l.current_sequence, l.home_score, l.away_score FROM match_data.matches m JOIN match_data.match_live_state l ON l.match_id = m.id WHERE m.id = $1::uuid`, matchID).Scan(&status, &snapshot.EventSequence, &snapshot.HomeScore, &snapshot.AwayScore)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Snapshot{}, ErrMatchNotFound
+	}
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("read match snapshot: %w", err)
+	}
+	snapshot.MatchID, snapshot.Status = matchID, Status(status)
+	return snapshot, nil
+}
+
+func (repository *PostgresRepository) ListEvents(ctx context.Context, matchID string, afterSequence int) (EventList, error) {
+	if !isUUID(matchID) {
+		return EventList{}, invalidMatchInput("match_id must be a UUID")
+	}
+	if afterSequence < 0 {
+		return EventList{}, invalidMatchInput("after_sequence must not be negative")
+	}
+	tx, err := repository.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return EventList{}, fmt.Errorf("begin event read transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var exists bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM match_data.matches WHERE id = $1::uuid)`, matchID).Scan(&exists); err != nil {
+		return EventList{}, fmt.Errorf("check match for event list: %w", err)
+	}
+	if !exists {
+		return EventList{}, ErrMatchNotFound
+	}
+	rows, err := tx.Query(ctx, `SELECT e.id::text, e.sequence, e.action_code, e.side, e.qualifiers, s.role, s.participant_id::text FROM match_data.match_events e LEFT JOIN match_data.match_event_subjects s ON s.event_id = e.id AND s.match_id = e.match_id WHERE e.match_id = $1::uuid AND e.sequence > $2 ORDER BY e.sequence ASC, s.role, s.ordinal`, matchID, afterSequence)
+	if err != nil {
+		return EventList{}, fmt.Errorf("list match events: %w", err)
+	}
+	result := EventList{Items: make([]Event, 0)}
+	for rows.Next() {
+		var event Event
+		var actionCode string
+		var side Side
+		var qualifiers []byte
+		var role, participantID *string
+		if err := rows.Scan(&event.ID, &event.Sequence, &actionCode, &side, &qualifiers, &role, &participantID); err != nil {
+			return EventList{}, fmt.Errorf("scan match event: %w", err)
+		}
+		var decoded map[string]any
+		if err := json.Unmarshal(qualifiers, &decoded); err != nil {
+			return EventList{}, fmt.Errorf("decode match event qualifiers: %w", err)
+		}
+		event.Command.ActionCode, event.Command.Side, event.Command.Qualifiers = actionCode, side, decoded
+		if role != nil && participantID != nil {
+			subject := Subject{Role: *role, ParticipantID: *participantID}
+			if len(result.Items) > 0 && result.Items[len(result.Items)-1].ID == event.ID {
+				result.Items[len(result.Items)-1].Command.Subjects = append(result.Items[len(result.Items)-1].Command.Subjects, subject)
+				continue
+			}
+			event.Command.Subjects = append(event.Command.Subjects, subject)
+		}
+		result.Items = append(result.Items, event)
+		result.LastSequence = event.Sequence
+	}
+	if err := rows.Err(); err != nil {
+		return EventList{}, fmt.Errorf("read match events: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return EventList{}, fmt.Errorf("commit event read: %w", err)
+	}
+	return result, nil
 }
 
 func reserveIdempotencyKey(ctx context.Context, tx pgx.Tx, scope string, idempotency Idempotency) (bool, error) {

@@ -41,6 +41,16 @@ type EventReverser interface {
 	Reverse(ctx context.Context, matchID, eventID, clientEventID string, expectedSequence int, reason string, idempotency Idempotency) (Event, Snapshot, error)
 }
 
+type ReadRepository interface {
+	GetSnapshot(ctx context.Context, matchID string) (Snapshot, error)
+	ListEvents(ctx context.Context, matchID string, afterSequence int) (EventList, error)
+}
+
+type EventList struct {
+	Items        []Event `json:"items"`
+	LastSequence int     `json:"last_sequence"`
+}
+
 type Idempotency struct {
 	Key         string
 	RequestHash []byte
@@ -127,6 +137,7 @@ func (input CreateInput) Validate() error {
 }
 
 var ErrInvalidMatchInput = invalidInputError{}
+var ErrMatchNotFound = errors.New("match not found")
 var ErrIdempotencyConflict = errors.New("idempotency key was already used for a different request")
 
 type invalidInputError struct{}
