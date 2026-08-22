@@ -170,21 +170,34 @@ func (command AppendEventCommand) Validate() error {
 		if strings.TrimSpace(subject.ParticipantID) == "" || strings.TrimSpace(subject.Role) == "" {
 			return errors.New("event subject role and participant_id are required")
 		}
+		switch subject.Role {
+		case "PRIMARY", "SCORER", "ASSISTER", "OPPONENT", "PLAYER_ON", "PLAYER_OFF":
+		default:
+			return fmt.Errorf("unsupported event subject role %s", subject.Role)
+		}
 		roles[subject.Role] = true
 	}
 	if command.ActionCode == "" {
 		return errors.New("action_code is required")
 	}
-	switch command.ActionCode {
-	case "GOAL":
-		if !roles["SCORER"] {
-			return errors.New("GOAL requires SCORER")
+	requiredRoles, supported := eventActionRoles[command.ActionCode]
+	if !supported {
+		return fmt.Errorf("unsupported action_code %s", command.ActionCode)
+	}
+	for _, role := range requiredRoles {
+		if !roles[role] {
+			return fmt.Errorf("%s requires %s", command.ActionCode, role)
 		}
-	case "SUBSTITUTION":
-		if !roles["PLAYER_ON"] || !roles["PLAYER_OFF"] {
-			return errors.New("SUBSTITUTION requires PLAYER_ON and PLAYER_OFF")
+	}
+	if command.ActionCode == "GOAL" {
+		if finishType, ok := command.Qualifiers["finish_type"]; ok {
+			value, valid := finishType.(string)
+			if !valid || !goalFinishTypes[value] {
+				return errors.New("GOAL finish_type is invalid")
+			}
 		}
-	case "SCORE_ADJUSTMENT":
+	}
+	if command.ActionCode == "SCORE_ADJUSTMENT" {
 		reason, ok := command.Qualifiers["reason"].(string)
 		if !ok || strings.TrimSpace(reason) == "" {
 			return errors.New("SCORE_ADJUSTMENT requires a reason")
@@ -194,6 +207,49 @@ func (command AppendEventCommand) Validate() error {
 		}
 	}
 	return nil
+}
+
+var eventActionRoles = map[string][]string{
+	"GOAL":                   {"SCORER"},
+	"SHOT_ON_TARGET":         {"PRIMARY"},
+	"SHOT_OFF_TARGET":        {"PRIMARY"},
+	"SHOT_OFF_POST":          {"PRIMARY"},
+	"ASSIST":                 {"PRIMARY"},
+	"CHANCE_CREATED":         {"PRIMARY"},
+	"AERIAL_WON":             {"PRIMARY"},
+	"AERIAL_LOST":            {"PRIMARY"},
+	"FOUL_WON":               {"PRIMARY"},
+	"FOUL_COMMITTED":         {"PRIMARY"},
+	"DRIBBLE_WON":            {"PRIMARY"},
+	"TACKLE_WON":             {"PRIMARY"},
+	"LOST_BALL":              {"PRIMARY"},
+	"KEY_PASS":               {"PRIMARY"},
+	"RECOVERY":               {"PRIMARY"},
+	"INTERCEPTION":           {"PRIMARY"},
+	"BLOCK":                  {"PRIMARY"},
+	"DUEL_WON":               {"PRIMARY"},
+	"DUEL_LOST":              {"PRIMARY"},
+	"DRIBBLED_PAST":          {"PRIMARY"},
+	"CLEARANCE":              {"PRIMARY"},
+	"HEADER_CLEARED":         {"PRIMARY"},
+	"GOALKEEPER_SAVE":        {"PRIMARY"},
+	"GOALKEEPER_DIVING_SAVE": {"PRIMARY"},
+	"GOALKEEPER_CLAIM":       {"PRIMARY"},
+	"GOALKEEPER_PUNCH":       {"PRIMARY"},
+	"GOALKEEPER_SWEEP":       {"PRIMARY"},
+	"GOAL_CONCEDED":          {"PRIMARY"},
+	"DISTRIBUTION_LONG":      {"PRIMARY"},
+	"DISTRIBUTION_SHORT":     {"PRIMARY"},
+	"SUBSTITUTION":           {"PLAYER_ON", "PLAYER_OFF"},
+	"SCORE_ADJUSTMENT":       {"PRIMARY"},
+}
+
+var goalFinishTypes = map[string]bool{
+	"STRONG_FOOT": true,
+	"WEAK_FOOT":   true,
+	"HEADER":      true,
+	"VOLLEY":      true,
+	"OTHER":       true,
 }
 
 type Event struct {
@@ -299,14 +355,15 @@ func ReverseEvent(snapshot Snapshot, original Event, clientEventID, reason, reve
 	if delta == 0 {
 		return Event{}, Snapshot{}, ErrEventNotReversible
 	}
-	if original.Command.Side == Home && snapshot.HomeScore < delta || original.Command.Side == Away && snapshot.AwayScore < delta {
+	inverseDelta := -delta
+	if inverseDelta < 0 && ((original.Command.Side == Home && snapshot.HomeScore < -inverseDelta) || (original.Command.Side == Away && snapshot.AwayScore < -inverseDelta)) {
 		return Event{}, Snapshot{}, errors.New("reversal would make the score negative")
 	}
 	snapshot.EventSequence++
 	if original.Command.Side == Home {
-		snapshot.HomeScore -= delta
+		snapshot.HomeScore += inverseDelta
 	} else {
-		snapshot.AwayScore -= delta
+		snapshot.AwayScore += inverseDelta
 	}
 	return Event{ID: reversalID, Sequence: snapshot.EventSequence, Command: AppendEventCommand{
 		ClientEventID:    clientEventID,

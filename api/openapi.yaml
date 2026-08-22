@@ -260,7 +260,7 @@ components:
       properties:
         client_event_id: { type: string, format: uuid }
         expected_sequence: { type: integer, minimum: 0 }
-        action_code: { type: string, enum: [GOAL, ASSIST, SHOT_ON_TARGET, TACKLE_WON, INTERCEPTION, GOALKEEPER_SAVE, FOUL_COMMITTED, FOUL_WON, SUBSTITUTION, SCORE_ADJUSTMENT] }
+        action_code: { type: string, enum: [GOAL, SHOT_ON_TARGET, SHOT_OFF_TARGET, SHOT_OFF_POST, ASSIST, CHANCE_CREATED, AERIAL_WON, AERIAL_LOST, FOUL_WON, FOUL_COMMITTED, DRIBBLE_WON, CROSS, LOST_BALL, KEY_PASS, RECOVERY, INTERCEPTION, TACKLE_WON, BLOCK, DUEL_WON, DUEL_LOST, DRIBBLED_PAST, CLEARANCE, HEADER_CLEARED, GOALKEEPER_SAVE, GOALKEEPER_DIVING_SAVE, GOALKEEPER_CLAIM, GOALKEEPER_PUNCH, GOALKEEPER_SWEEP, GOAL_CONCEDED, DISTRIBUTION_LONG, DISTRIBUTION_SHORT, SUBSTITUTION, SCORE_ADJUSTMENT] }
         side: { type: string, enum: [HOME, AWAY] }
         subjects: { type: array, minItems: 1, items: { $ref: '#/components/schemas/EventSubject' } }
         qualifiers: { type: object, additionalProperties: true }

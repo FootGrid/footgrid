@@ -38,7 +38,7 @@ func LiveSessionHandler(repository match.SetupRepository) http.Handler {
 
 func (handlers setupHandlers) replaceRoster(writer http.ResponseWriter, request *http.Request) {
 	var roster match.Roster
-	if err := decodeJSON(request, &roster); err != nil {
+	if err := decodeJSON(writer, request, &roster); err != nil {
 		platformhttpapi.WriteProblem(writer, http.StatusBadRequest, "invalid-request", err.Error(), request)
 		return
 	}
@@ -60,7 +60,7 @@ func (handlers setupHandlers) setLineups(writer http.ResponseWriter, request *ht
 		HomeStarterIDs []string `json:"home_starter_ids"`
 		AwayStarterIDs []string `json:"away_starter_ids"`
 	}
-	if err := decodeJSON(request, &payload); err != nil {
+	if err := decodeJSON(writer, request, &payload); err != nil {
 		platformhttpapi.WriteProblem(writer, http.StatusBadRequest, "invalid-request", err.Error(), request)
 		return
 	}
@@ -103,9 +103,13 @@ func setupIdempotency(request *http.Request, payload any) (string, [32]byte, err
 	return key, sha256.Sum256(body), nil
 }
 
-func decodeJSON(request *http.Request, target any) error {
+func decodeJSON(writer http.ResponseWriter, request *http.Request, target any) error {
 	defer request.Body.Close()
-	decoder := json.NewDecoder(io.LimitReader(request.Body, maxCreateMatchBodyBytes))
+	body, err := io.ReadAll(http.MaxBytesReader(writer, request.Body, maxCreateMatchBodyBytes))
+	if err != nil {
+		return fmt.Errorf("read request body: %w", err)
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(body)))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
 		return fmt.Errorf("decode JSON: %w", err)
@@ -119,9 +123,12 @@ func decodeJSON(request *http.Request, target any) error {
 func writeSetupError(writer http.ResponseWriter, request *http.Request, err error) {
 	status := http.StatusInternalServerError
 	title := "internal-error"
-	if errors.Is(err, match.ErrInvalidMatchInput) {
+	switch {
+	case errors.Is(err, match.ErrInvalidMatchInput):
 		status, title = http.StatusUnprocessableEntity, "validation-error"
-	} else if errors.Is(err, match.ErrMatchNotReady) {
+	case errors.Is(err, match.ErrMatchNotFound):
+		status, title = http.StatusNotFound, "not-found"
+	case errors.Is(err, match.ErrMatchNotDraft), errors.Is(err, match.ErrMatchNotReady), errors.Is(err, match.ErrIdempotencyConflict):
 		status, title = http.StatusConflict, "state-conflict"
 	}
 	platformhttpapi.WriteProblem(writer, status, title, err.Error(), request)

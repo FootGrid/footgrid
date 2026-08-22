@@ -48,6 +48,8 @@ func ReverseEventHandler(repository match.EventReverser) http.Handler {
 			switch {
 			case errors.Is(err, match.ErrInvalidMatchInput):
 				status, title = http.StatusUnprocessableEntity, "validation-error"
+			case errors.Is(err, match.ErrMatchNotFound), errors.Is(err, match.ErrEventNotFound):
+				status, title = http.StatusNotFound, "not-found"
 			case errors.Is(err, match.ErrSequenceConflict), errors.Is(err, match.ErrMatchNotLive), errors.Is(err, match.ErrEventAlreadyReversed), errors.Is(err, match.ErrEventNotReversible), errors.Is(err, match.ErrIdempotencyConflict):
 				status, title = http.StatusConflict, "state-conflict"
 			}

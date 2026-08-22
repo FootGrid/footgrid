@@ -142,6 +142,9 @@ func (input CreateInput) Validate() error {
 
 var ErrInvalidMatchInput = invalidInputError{}
 var ErrMatchNotFound = errors.New("match not found")
+var ErrMatchNotDraft = errors.New("match is not a draft")
+var ErrEventAlreadyExists = errors.New("event client ID already exists")
+var ErrEventNotFound = errors.New("event not found")
 var ErrIdempotencyConflict = errors.New("idempotency key was already used for a different request")
 
 type invalidInputError struct{}

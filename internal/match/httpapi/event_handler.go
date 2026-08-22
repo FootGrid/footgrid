@@ -58,7 +58,10 @@ func AppendEventHandler(repository match.EventAppender) http.Handler {
 			switch {
 			case errors.Is(err, match.ErrInvalidMatchInput):
 				status, title = http.StatusUnprocessableEntity, "validation-error"
+			case errors.Is(err, match.ErrMatchNotFound):
+				status, title = http.StatusNotFound, "not-found"
 			case errors.Is(err, match.ErrSequenceConflict), errors.Is(err, match.ErrMatchNotLive), errors.Is(err, match.ErrIdempotencyConflict):
+			case errors.Is(err, match.ErrSequenceConflict), errors.Is(err, match.ErrMatchNotLive), errors.Is(err, match.ErrEventAlreadyExists), errors.Is(err, match.ErrIdempotencyConflict):
 				status, title = http.StatusConflict, "state-conflict"
 			}
 			platformhttpapi.WriteProblem(writer, status, title, err.Error(), request)

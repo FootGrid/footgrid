@@ -52,9 +52,9 @@ func main() {
 	mux.Handle("POST /v1/matches/{matchId}/live-session", commandHandler(matchhttp.LiveSessionHandler(drafts), "OWNER", "ADMIN", "ORGANIZER", "TEAM_MANAGER", "SCORER", "REFEREE"))
 	mux.Handle("POST /v1/matches/{matchId}/events", commandHandler(matchhttp.AppendEventHandler(drafts), "OWNER", "ADMIN", "ORGANIZER", "TEAM_MANAGER", "SCORER", "REFEREE"))
 	mux.Handle("POST /v1/matches/{matchId}/events/{eventId}/reverse", commandHandler(matchhttp.ReverseEventHandler(drafts), "OWNER", "ADMIN", "ORGANIZER", "TEAM_MANAGER", "SCORER", "REFEREE"))
-	mux.Handle("GET /v1/matches/{matchId}/snapshot", matchhttp.SnapshotHandler(drafts))
-	mux.Handle("GET /v1/matches/{matchId}/events", matchhttp.ListEventsHandler(drafts))
-	mux.Handle("GET /v1/matches/{matchId}", matchhttp.MatchHandler(drafts))
+	mux.Handle("GET /v1/matches/{matchId}/snapshot", commandHandler(matchhttp.SnapshotHandler(drafts), "OWNER", "ADMIN", "ORGANIZER", "TEAM_MANAGER", "SCORER", "REFEREE"))
+	mux.Handle("GET /v1/matches/{matchId}/events", commandHandler(matchhttp.ListEventsHandler(drafts), "OWNER", "ADMIN", "ORGANIZER", "TEAM_MANAGER", "SCORER", "REFEREE"))
+	mux.Handle("GET /v1/matches/{matchId}", commandHandler(matchhttp.MatchHandler(drafts), "OWNER", "ADMIN", "ORGANIZER", "TEAM_MANAGER", "SCORER", "REFEREE"))
 	// Match command handlers delegate domain and persistence work to internal/match.
 	handler := httpapi.WithMiddleware(mux)
 	if !config.AuthDisabled {
