@@ -6,8 +6,13 @@ import (
 	"time"
 )
 
-// Config contains only process configuration. Tenant and user context belongs in
-// the request, never in environment variables.
+/*
+Environment exposes the process config only HTTP request is different
+- DB URL
+- Server addr
+- Auth and Config
+- Worker config
+*/
 type Config struct {
 	Environment        string
 	HTTPAddress        string
@@ -24,6 +29,8 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("parse OUTBOX_POLL_INTERVAL: %w", err)
 	}
 
+	//TODO(anshu): Remove redundant fields (separate .envs and 'env' into dev, test, prod)
+	//TODO(anshu): Setup reverse proxy (if required)
 	config := Config{
 		Environment:        value("APP_ENV", "local"),
 		HTTPAddress:        value("HTTP_ADDR", ":8080"),
