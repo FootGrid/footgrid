@@ -1,0 +1,128 @@
+package projection
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+
+	"github.com/FootGrid/footgrid/internal/match"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+const consumerName = "match-snapshot-v1"
+
+type Event struct {
+	SourceID    string
+	EventType   string
+	AggregateID string
+	Payload     json.RawMessage
+}
+
+type snapshotEnvelope struct {
+	Event    match.Event    `json:"event"`
+	Snapshot match.Snapshot `json:"snapshot"`
+}
+
+type Projector struct{ pool *pgxpool.Pool }
+
+func NewProjector(pool *pgxpool.Pool) *Projector { return &Projector{pool: pool} }
+
+func (projector *Projector) Process(ctx context.Context, event Event) error {
+	if !isUUID(event.SourceID) || !isUUID(event.AggregateID) {
+		return errors.New("projection event source and aggregate IDs must be UUIDs")
+	}
+	if len(event.Payload) == 0 {
+		return errors.New("projection event payload is required")
+	}
+	tx, err := projector.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin projection transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	inserted, err := tx.Exec(ctx, `INSERT INTO read_model.consumer_inbox (consumer_name, source_event_id) VALUES ($1, $2::uuid) ON CONFLICT DO NOTHING`, consumerName, event.SourceID)
+	if err != nil {
+		return fmt.Errorf("claim projection event: %w", err)
+	}
+	if inserted.RowsAffected() == 0 {
+		if err := tx.Commit(ctx); err != nil {
+			return fmt.Errorf("commit duplicate projection acknowledgement: %w", err)
+		}
+		return nil
+	}
+	switch event.EventType {
+	case "match.created.v1":
+		var created match.Match
+		if err := json.Unmarshal(event.Payload, &created); err != nil {
+			return fmt.Errorf("decode match-created event: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO read_model.match_snapshots (match_id, organization_id, status, last_event_sequence) VALUES ($1::uuid, $2::uuid, $3, $4) ON CONFLICT (match_id) DO UPDATE SET status = EXCLUDED.status, last_event_sequence = EXCLUDED.last_event_sequence, generated_at = clock_timestamp()`, event.AggregateID, created.OrganizationID, created.Status, created.EventSequence); err != nil {
+			return fmt.Errorf("project match-created event: %w", err)
+		}
+	case "match.status-changed.v1", "match.event-recorded.v1", "match.event-reversed.v1":
+		var envelope snapshotEnvelope
+		if err := json.Unmarshal(event.Payload, &envelope); err != nil {
+			return fmt.Errorf("decode match projection event: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `UPDATE read_model.match_snapshots SET status = $2, home_score = $3, away_score = $4, last_event_sequence = $5, generated_at = clock_timestamp() WHERE match_id = $1::uuid`, event.AggregateID, envelope.Snapshot.Status, envelope.Snapshot.HomeScore, envelope.Snapshot.AwayScore, envelope.Snapshot.EventSequence); err != nil {
+			return fmt.Errorf("project match snapshot: %w", err)
+		}
+	default:
+		return fmt.Errorf("unsupported projection event type %q", event.EventType)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit projection transaction: %w", err)
+	}
+	return nil
+}
+
+func isUUID(value string) bool {
+	if len(value) != 36 {
+		return false
+	}
+	for index, character := range value {
+		if index == 8 || index == 13 || index == 18 || index == 23 {
+			if character != '-' {
+				return false
+			}
+			continue
+		}
+		if !((character >= '0' && character <= '9') || (character >= 'a' && character <= 'f') || (character >= 'A' && character <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
+func DecodeEvent(body []byte) (Event, error) {
+	var message struct {
+		ID          string          `json:"id"`
+		EventType   string          `json:"event_type"`
+		DetailType  string          `json:"detail-type"`
+		AggregateID string          `json:"aggregate_id"`
+		Payload     json.RawMessage `json:"payload"`
+		Detail      json.RawMessage `json:"detail"`
+	}
+	if err := json.Unmarshal(body, &message); err != nil {
+		return Event{}, fmt.Errorf("decode projection message: %w", err)
+	}
+	if len(message.Detail) > 0 && string(message.Detail) != "null" {
+		var detail struct {
+			AggregateID string          `json:"aggregate_id"`
+			EventType   string          `json:"event_type"`
+			Payload     json.RawMessage `json:"payload"`
+		}
+		if err := json.Unmarshal(message.Detail, &detail); err != nil {
+			return Event{}, fmt.Errorf("decode projection detail: %w", err)
+		}
+		message.AggregateID, message.EventType, message.Payload = detail.AggregateID, detail.EventType, detail.Payload
+	}
+	if message.EventType == "" {
+		message.EventType = message.DetailType
+	}
+	if message.ID == "" || message.AggregateID == "" || message.EventType == "" || len(message.Payload) == 0 {
+		return Event{}, errors.New("projection message requires id, event type, aggregate ID, and payload")
+	}
+	return Event{SourceID: message.ID, EventType: message.EventType, AggregateID: message.AggregateID, Payload: message.Payload}, nil
+}

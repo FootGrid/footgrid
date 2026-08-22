@@ -2,12 +2,12 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 	"os"
 
 	"github.com/FootGrid/footgrid/internal/platform/config"
 	"github.com/FootGrid/footgrid/internal/platform/database"
+	"github.com/FootGrid/footgrid/internal/projection"
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 )
@@ -27,14 +27,18 @@ func main() {
 		os.Exit(1)
 	}
 	defer pool.Close()
+	projector := projection.NewProjector(pool)
 
 	lambda.Start(func(ctx context.Context, event events.SQSEvent) error {
 		for _, record := range event.Records {
-			var payload map[string]any
-			if err := json.Unmarshal([]byte(record.Body), &payload); err != nil {
+			payload, err := projection.DecodeEvent([]byte(record.Body))
+			if err != nil {
 				return err
 			}
-			slog.InfoContext(ctx, "received projection event", "message_id", record.MessageId, "payload", payload)
+			if err := projector.Process(ctx, payload); err != nil {
+				return err
+			}
+			slog.InfoContext(ctx, "projected match event", "message_id", record.MessageId, "source_event_id", payload.SourceID, "event_type", payload.EventType)
 		}
 		return nil
 	})
