@@ -15,6 +15,7 @@ type Repository interface {
 	ReplaceRoster(ctx context.Context, matchID string, roster Roster, idempotency Idempotency) (Roster, error)
 	SetInitialLineups(ctx context.Context, matchID string, homeStarterIDs, awayStarterIDs []string, idempotency Idempotency) (Roster, error)
 	MarkReady(ctx context.Context, matchID string, idempotency Idempotency) (Match, error)
+	StartLiveSession(ctx context.Context, matchID string, idempotency Idempotency) (Snapshot, error)
 	Append(ctx context.Context, matchID string, command AppendEventCommand) (Event, Snapshot, error)
 	Reverse(ctx context.Context, matchID, eventID, clientEventID string, expectedSequence int, reason string) (Event, Snapshot, error)
 }
@@ -24,6 +25,7 @@ type SetupRepository interface {
 	ReplaceRoster(ctx context.Context, matchID string, roster Roster, idempotency Idempotency) (Roster, error)
 	SetInitialLineups(ctx context.Context, matchID string, homeStarterIDs, awayStarterIDs []string, idempotency Idempotency) (Roster, error)
 	MarkReady(ctx context.Context, matchID string, idempotency Idempotency) (Match, error)
+	StartLiveSession(ctx context.Context, matchID string, idempotency Idempotency) (Snapshot, error)
 }
 
 // DraftCreator is the narrow dependency used by the create-match HTTP handler.

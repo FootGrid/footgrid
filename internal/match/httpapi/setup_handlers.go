@@ -20,6 +20,22 @@ func SetupHandlers(repository match.SetupRepository) (http.Handler, http.Handler
 	return http.HandlerFunc(handlers.replaceRoster), http.HandlerFunc(handlers.setLineups), http.HandlerFunc(handlers.markReady)
 }
 
+func LiveSessionHandler(repository match.SetupRepository) http.Handler {
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		key, hash, err := setupIdempotency(request, struct{}{})
+		if err != nil {
+			platformhttpapi.WriteProblem(writer, http.StatusUnprocessableEntity, "validation-error", err.Error(), request)
+			return
+		}
+		result, err := repository.StartLiveSession(request.Context(), request.PathValue("matchId"), match.Idempotency{Key: key, RequestHash: hash[:]})
+		if err != nil {
+			writeSetupError(writer, request, err)
+			return
+		}
+		platformhttpapi.WriteJSON(writer, http.StatusCreated, result)
+	})
+}
+
 func (handlers setupHandlers) replaceRoster(writer http.ResponseWriter, request *http.Request) {
 	var roster match.Roster
 	if err := decodeJSON(request, &roster); err != nil {
@@ -105,6 +121,8 @@ func writeSetupError(writer http.ResponseWriter, request *http.Request, err erro
 	title := "internal-error"
 	if errors.Is(err, match.ErrInvalidMatchInput) {
 		status, title = http.StatusUnprocessableEntity, "validation-error"
+	} else if errors.Is(err, match.ErrMatchNotReady) {
+		status, title = http.StatusConflict, "state-conflict"
 	}
 	platformhttpapi.WriteProblem(writer, status, title, err.Error(), request)
 }

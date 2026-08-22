@@ -159,15 +159,25 @@ type Event struct {
 }
 
 type Snapshot struct {
-	MatchID       string
-	Status        Status
-	EventSequence int
-	HomeScore     int
-	AwayScore     int
+	MatchID       string `json:"match_id"`
+	Status        Status `json:"status"`
+	EventSequence int    `json:"event_sequence"`
+	HomeScore     int    `json:"home_score"`
+	AwayScore     int    `json:"away_score"`
 }
 
 var ErrSequenceConflict = errors.New("match event sequence conflict")
 var ErrMatchNotLive = errors.New("match is not live")
+var ErrMatchNotReady = errors.New("match is not ready")
+
+// StartLiveSession performs the only legal transition into live scoring.
+func StartLiveSession(snapshot Snapshot) (Snapshot, error) {
+	if snapshot.Status != Ready {
+		return Snapshot{}, ErrMatchNotReady
+	}
+	snapshot.Status = Live
+	return snapshot, nil
+}
 
 // ApplyEvent is deterministic and has no I/O. The persistence adapter invokes
 // it while holding the match_live_state row lock.

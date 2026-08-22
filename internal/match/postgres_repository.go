@@ -286,3 +286,86 @@ func (repository *PostgresRepository) MarkReady(ctx context.Context, matchID str
 	}
 	return Match{ID: matchID, Status: Ready}, nil
 }
+
+func (repository *PostgresRepository) StartLiveSession(ctx context.Context, matchID string, idempotency Idempotency) (Snapshot, error) {
+	if !isUUID(matchID) {
+		return Snapshot{}, invalidMatchInput("match_id must be a UUID")
+	}
+	if err := idempotency.Validate(); err != nil {
+		return Snapshot{}, err
+	}
+	scope := "matches:live-session:" + matchID
+	tx, err := repository.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("begin live-session transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `DELETE FROM platform.idempotency_records WHERE scope = $1 AND idempotency_key = $2 AND expires_at <= clock_timestamp()`, scope, idempotency.Key); err != nil {
+		return Snapshot{}, fmt.Errorf("remove expired live-session idempotency record: %w", err)
+	}
+	reserved, err := reserveIdempotencyKey(ctx, tx, scope, idempotency)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	if !reserved {
+		var requestHash, response []byte
+		var responseStatus int
+		if err := tx.QueryRow(ctx, `SELECT request_hash, response_status, response_body FROM platform.idempotency_records WHERE scope = $1 AND idempotency_key = $2`, scope, idempotency.Key).Scan(&requestHash, &responseStatus, &response); err != nil {
+			return Snapshot{}, fmt.Errorf("read live-session idempotency record: %w", err)
+		}
+		if !bytes.Equal(requestHash, idempotency.RequestHash) {
+			return Snapshot{}, ErrIdempotencyConflict
+		}
+		if responseStatus != 201 {
+			return Snapshot{}, fmt.Errorf("stored live-session response has unexpected status %d", responseStatus)
+		}
+		var snapshot Snapshot
+		if err := json.Unmarshal(response, &snapshot); err != nil {
+			return Snapshot{}, fmt.Errorf("decode stored live-session response: %w", err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return Snapshot{}, fmt.Errorf("commit idempotent live-session read: %w", err)
+		}
+		return snapshot, nil
+	}
+	var snapshot Snapshot
+	var status string
+	var playersPerSide int
+	if err := tx.QueryRow(ctx, `SELECT m.status::text, m.players_per_side, l.current_sequence, l.home_score, l.away_score FROM match_data.matches m JOIN match_data.match_live_state l ON l.match_id = m.id WHERE m.id = $1::uuid FOR UPDATE OF m, l`, matchID).Scan(&status, &playersPerSide, &snapshot.EventSequence, &snapshot.HomeScore, &snapshot.AwayScore); err != nil {
+		return Snapshot{}, fmt.Errorf("lock match for live session: %w", err)
+	}
+	snapshot.MatchID, snapshot.Status = matchID, Status(status)
+	if _, err := StartLiveSession(snapshot); err != nil {
+		return Snapshot{}, err
+	}
+	var homeStarters, awayStarters int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FILTER (WHERE s.side = 'HOME'), count(*) FILTER (WHERE s.side = 'AWAY') FROM match_data.match_participants p JOIN match_data.match_sides s ON s.id = p.match_side_id WHERE p.match_id = $1::uuid AND p.participation_status = 'STARTER'`, matchID).Scan(&homeStarters, &awayStarters); err != nil {
+		return Snapshot{}, fmt.Errorf("count starting lineup: %w", err)
+	}
+	if homeStarters != playersPerSide || awayStarters != playersPerSide {
+		return Snapshot{}, invalidMatchInput("both complete initial lineups are required")
+	}
+	if _, err := tx.Exec(ctx, `UPDATE match_data.matches SET status = 'LIVE', status_version = status_version + 1 WHERE id = $1::uuid`, matchID); err != nil {
+		return Snapshot{}, fmt.Errorf("start live match: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE match_data.match_live_state SET current_period_number = 1, clock_state = 'RUNNING', updated_at = clock_timestamp() WHERE match_id = $1::uuid`, matchID); err != nil {
+		return Snapshot{}, fmt.Errorf("start live clock: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO match_data.live_sessions (match_id, status, period_number) VALUES ($1::uuid, 'RUNNING', 1)`, matchID); err != nil {
+		return Snapshot{}, fmt.Errorf("create live session: %w", err)
+	}
+	response, err := json.Marshal(snapshot)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("encode live-session response: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO platform.outbox_events (aggregate_type, aggregate_id, aggregate_sequence, event_type, payload) VALUES ('match', $1::uuid, $2, 'match.status-changed.v1', $3::jsonb)`, matchID, snapshot.EventSequence, response); err != nil {
+		return Snapshot{}, fmt.Errorf("enqueue live-session event: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE platform.idempotency_records SET response_status = 201, response_body = $3::jsonb WHERE scope = $1 AND idempotency_key = $2`, scope, idempotency.Key, response); err != nil {
+		return Snapshot{}, fmt.Errorf("save live-session response: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Snapshot{}, fmt.Errorf("commit live session: %w", err)
+	}
+	return snapshot, nil
+}

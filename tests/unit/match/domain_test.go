@@ -31,6 +31,19 @@ func TestApplyEventRejectsStaleSequence(t *testing.T) {
 	}
 }
 
+func TestStartLiveSessionRequiresReadyMatch(t *testing.T) {
+	if _, err := match.StartLiveSession(match.Snapshot{Status: match.Draft}); !errors.Is(err, match.ErrMatchNotReady) {
+		t.Fatalf("expected not-ready error, got %v", err)
+	}
+	snapshot, err := match.StartLiveSession(match.Snapshot{MatchID: "match-1", Status: match.Ready, EventSequence: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Status != match.Live || snapshot.EventSequence != 2 {
+		t.Fatalf("unexpected live snapshot: %#v", snapshot)
+	}
+}
+
 func TestSubstitutionRequiresBothParticipants(t *testing.T) {
 	err := (match.AppendEventCommand{ClientEventID: "event-1", ActionCode: "SUBSTITUTION", Side: match.Home, Subjects: []match.Subject{{Role: "PLAYER_ON", ParticipantID: "participant-1"}}}).Validate()
 	if err == nil {

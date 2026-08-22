@@ -35,6 +35,7 @@ func main() {
 	mux.Handle("PUT /v1/matches/{matchId}/roster", rosterHandler)
 	mux.Handle("PUT /v1/matches/{matchId}/lineups", lineupHandler)
 	mux.Handle("POST /v1/matches/{matchId}/ready", readyHandler)
+	mux.Handle("POST /v1/matches/{matchId}/live-session", matchhttp.LiveSessionHandler(drafts))
 	// Match command handlers delegate domain and persistence work to internal/match.
 	handler := httpapi.WithMiddleware(mux)
 	if os.Getenv("AWS_LAMBDA_RUNTIME_API") != "" {
