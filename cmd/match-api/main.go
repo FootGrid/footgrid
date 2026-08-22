@@ -8,6 +8,7 @@ import (
 
 	"github.com/FootGrid/footgrid/internal/match"
 	matchhttp "github.com/FootGrid/footgrid/internal/match/httpapi"
+	"github.com/FootGrid/footgrid/internal/platform/auth"
 	"github.com/FootGrid/footgrid/internal/platform/config"
 	"github.com/FootGrid/footgrid/internal/platform/database"
 	"github.com/FootGrid/footgrid/internal/platform/httpapi"
@@ -42,6 +43,14 @@ func main() {
 	mux.Handle("GET /v1/matches/{matchId}/events", matchhttp.ListEventsHandler(drafts))
 	// Match command handlers delegate domain and persistence work to internal/match.
 	handler := httpapi.WithMiddleware(mux)
+	if !config.AuthDisabled {
+		verifier, err := auth.NewJWTVerifier(config.CognitoIssuerURL, config.CognitoAudience)
+		if err != nil {
+			slog.Error("invalid authentication configuration", "error", err)
+			os.Exit(1)
+		}
+		handler = auth.Middleware(verifier, handler)
+	}
 	if os.Getenv("AWS_LAMBDA_RUNTIME_API") != "" {
 		httpapi.StartLambda(handler)
 		return

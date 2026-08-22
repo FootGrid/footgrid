@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/FootGrid/footgrid/internal/platform/auth"
 	"github.com/FootGrid/footgrid/internal/platform/config"
 	"github.com/FootGrid/footgrid/internal/platform/database"
 	"github.com/FootGrid/footgrid/internal/platform/httpapi"
@@ -28,6 +29,14 @@ func main() {
 	mux := http.NewServeMux()
 	mux.Handle("GET /health", httpapi.HealthHandler("identity-api", pool.Ping))
 	handler := httpapi.WithMiddleware(mux)
+	if !config.AuthDisabled {
+		verifier, err := auth.NewJWTVerifier(config.CognitoIssuerURL, config.CognitoAudience)
+		if err != nil {
+			slog.Error("invalid authentication configuration", "error", err)
+			os.Exit(1)
+		}
+		handler = auth.Middleware(verifier, handler)
+	}
 	if os.Getenv("AWS_LAMBDA_RUNTIME_API") != "" {
 		httpapi.StartLambda(handler)
 		return
