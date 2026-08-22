@@ -65,7 +65,7 @@ func (projector *Projector) Process(ctx context.Context, event Event) error {
 		if err := json.Unmarshal(event.Payload, &envelope); err != nil {
 			return fmt.Errorf("decode match projection event: %w", err)
 		}
-		if _, err := tx.Exec(ctx, `UPDATE read_model.match_snapshots SET status = $2, home_score = $3, away_score = $4, last_event_sequence = $5, generated_at = clock_timestamp() WHERE match_id = $1::uuid`, event.AggregateID, envelope.Snapshot.Status, envelope.Snapshot.HomeScore, envelope.Snapshot.AwayScore, envelope.Snapshot.EventSequence); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE read_model.match_snapshots SET status = $2, home_score = $3, away_score = $4, last_event_sequence = $5, generated_at = clock_timestamp() WHERE match_id = $1::uuid AND (last_event_sequence < $5 OR (last_event_sequence = $5 AND CASE status WHEN 'DRAFT' THEN 0 WHEN 'READY' THEN 1 WHEN 'LIVE' THEN 2 WHEN 'PAUSED' THEN 3 WHEN 'COMPLETED' THEN 4 WHEN 'FINALIZED' THEN 5 WHEN 'ABANDONED' THEN 6 ELSE -1 END < CASE $2 WHEN 'DRAFT' THEN 0 WHEN 'READY' THEN 1 WHEN 'LIVE' THEN 2 WHEN 'PAUSED' THEN 3 WHEN 'COMPLETED' THEN 4 WHEN 'FINALIZED' THEN 5 WHEN 'ABANDONED' THEN 6 ELSE -1 END))`, event.AggregateID, envelope.Snapshot.Status, envelope.Snapshot.HomeScore, envelope.Snapshot.AwayScore, envelope.Snapshot.EventSequence); err != nil {
 			return fmt.Errorf("project match snapshot: %w", err)
 		}
 	default:
@@ -73,6 +73,35 @@ func (projector *Projector) Process(ctx context.Context, event Event) error {
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit projection transaction: %w", err)
+	}
+	return nil
+}
+
+// RebuildMatch reconstructs the replaceable snapshot from command-side facts.
+// It is intentionally independent of inbox state so operators can replay a match.
+func (projector *Projector) RebuildMatch(ctx context.Context, matchID string) error {
+	if !isUUID(matchID) {
+		return errors.New("match ID must be a UUID")
+	}
+	tx, err := projector.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin projection rebuild: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var organizationID, status string
+	var sequence, homeScore, awayScore int
+	err = tx.QueryRow(ctx, `SELECT m.organization_id::text, m.status::text, COALESCE(MAX(e.sequence), 0), COALESCE(COUNT(*) FILTER (WHERE e.side = 'HOME' AND e.action_code = 'GOAL' AND NOT EXISTS (SELECT 1 FROM match_data.event_reversals r WHERE r.reversed_event_id = e.id)), 0), COALESCE(COUNT(*) FILTER (WHERE e.side = 'AWAY' AND e.action_code = 'GOAL' AND NOT EXISTS (SELECT 1 FROM match_data.event_reversals r WHERE r.reversed_event_id = e.id)), 0) FROM match_data.matches m LEFT JOIN match_data.match_events e ON e.match_id = m.id WHERE m.id = $1::uuid GROUP BY m.id, m.organization_id, m.status`, matchID).Scan(&organizationID, &status, &sequence, &homeScore, &awayScore)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return match.ErrMatchNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("read match ledger for rebuild: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO read_model.match_snapshots (match_id, organization_id, status, home_score, away_score, last_event_sequence, generated_at) VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, clock_timestamp()) ON CONFLICT (match_id) DO UPDATE SET organization_id = EXCLUDED.organization_id, status = EXCLUDED.status, home_score = EXCLUDED.home_score, away_score = EXCLUDED.away_score, last_event_sequence = EXCLUDED.last_event_sequence, generated_at = EXCLUDED.generated_at`, matchID, organizationID, status, homeScore, awayScore, sequence); err != nil {
+		return fmt.Errorf("write rebuilt match snapshot: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit projection rebuild: %w", err)
 	}
 	return nil
 }
