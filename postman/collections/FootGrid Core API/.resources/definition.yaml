@@ -1,0 +1,10 @@
+$kind: collection
+description: Core vertical-slice contract. Cognito JWT authentication is required outside local development.
+variables:
+  baseUrl: https://api.footgrid.example/v1
+auth:
+  - id: 3fabc84f-f49c-40d5-a0a8-27f08f6a4207
+    type: bearer
+    name: bearer auth
+    credentials:
+      token: "{{bearerToken}}"

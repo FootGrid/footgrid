@@ -1,0 +1,48 @@
+$kind: http-example
+request:
+  url: "{{baseUrl}}/matches"
+  method: POST
+  headers:
+    - key: Idempotency-Key
+      value: stringstringstring
+    - key: Content-Type
+      value: application/json
+    - key: Accept
+      value: application/problem+json
+    - key: Authorization
+      value: Bearer <token>
+      description: "Added as a part of security scheme: bearer"
+  body:
+    type: json
+    content: |-
+      {
+        "organization_id": "1804d9ed-e26c-8edf-a928-960169da3c8e",
+        "format_code": "6V6",
+        "players_per_side": 7,
+        "period_count": 2,
+        "total_duration_seconds": 4472,
+        "home": {
+          "display_name": "string",
+          "team_id": "87edafcc-8a39-8191-d8db-3f15892e5b14"
+        },
+        "away": {
+          "display_name": "string",
+          "team_id": null
+        },
+        "venue_name": "string"
+      }
+response:
+  statusCode: 422
+  statusText: Unprocessable Entity (WebDAV) (RFC 4918)
+  headers:
+    Content-Type: application/problem+json
+  body:
+    type: json
+    content: |-
+      {
+        "title": "string",
+        "status": 6822,
+        "trace_id": "string",
+        "detail": "string"
+      }
+order: 2000

@@ -1,0 +1,120 @@
+$kind: http-example
+request:
+  url: "{{baseUrl}}/matches/:matchId/roster"
+  method: PUT
+  headers:
+    - key: Idempotency-Key
+      value: stringstringstring
+    - key: Content-Type
+      value: application/json
+    - key: Accept
+      value: application/json
+    - key: Authorization
+      value: Bearer <token>
+      description: "Added as a part of security scheme: bearer"
+  pathVariables:
+    matchId: e423c2ae-2801-1828-5c76-08a15b56446e
+  body:
+    type: json
+    content: |-
+      {
+        "home": [
+          {
+            "id": "9dd6e0cf-d202-d345-0552-4a4069ef39b8",
+            "side": "HOME",
+            "shirt_number": 45,
+            "display_name": "string",
+            "participation_status": "BENCH",
+            "player_id": "dbd72558-bda3-b4e6-7c8e-cbd40d1155f1",
+            "position_code": "string",
+            "pitch_slot": "string"
+          },
+          {
+            "id": "033f0e85-c0e4-dac4-2428-56f1cedbf60a",
+            "side": "AWAY",
+            "shirt_number": 64,
+            "display_name": "string",
+            "participation_status": "BENCH",
+            "player_id": null,
+            "position_code": "string",
+            "pitch_slot": "string"
+          }
+        ],
+        "away": [
+          {
+            "id": "b7471d28-7bdf-c1a2-3329-4663e9dafef7",
+            "side": "AWAY",
+            "shirt_number": 15,
+            "display_name": "string",
+            "participation_status": "BENCH",
+            "player_id": "fbc487b5-ec52-8ce7-31af-ce84c77cdaad",
+            "position_code": "string",
+            "pitch_slot": "string"
+          },
+          {
+            "id": "934f59b1-9728-1bf7-859b-b9b77b46c542",
+            "side": "HOME",
+            "shirt_number": 13,
+            "display_name": "string",
+            "participation_status": "NOT_SELECTED",
+            "player_id": null,
+            "position_code": "string",
+            "pitch_slot": "string"
+          }
+        ]
+      }
+response:
+  statusCode: 200
+  statusText: OK
+  headers:
+    Content-Type: application/json
+  body:
+    type: json
+    content: |-
+      {
+        "home": [
+          {
+            "id": "a2a99ad5-19e3-544f-cac4-eca597d209e4",
+            "side": "AWAY",
+            "shirt_number": 56,
+            "display_name": "string",
+            "participation_status": "LEFT_MATCH",
+            "player_id": "d83442ba-eacb-7c52-cafc-b2dc24441420",
+            "position_code": "string",
+            "pitch_slot": "string"
+          },
+          {
+            "id": "e41d9099-93ed-aa50-3c9b-63ac51050fce",
+            "side": "HOME",
+            "shirt_number": 65,
+            "display_name": "string",
+            "participation_status": "BENCH",
+            "player_id": "6f6169da-5beb-63ef-ddfa-61912950a87f",
+            "position_code": "string",
+            "pitch_slot": "string"
+          }
+        ],
+        "away": [
+          {
+            "id": "61318194-7be8-3b07-262b-e226be67b006",
+            "side": "HOME",
+            "shirt_number": 78,
+            "display_name": "string",
+            "participation_status": "BENCH",
+            "player_id": "2088c5fb-74d9-fe9e-439c-8189df65d2cb",
+            "position_code": "string",
+            "pitch_slot": "string"
+          },
+          {
+            "id": "64b088ee-d3b7-7f20-8a4b-a88e4639ff81",
+            "side": "HOME",
+            "shirt_number": 31,
+            "display_name": "string",
+            "participation_status": "NOT_SELECTED",
+            "player_id": null,
+            "position_code": "string",
+            "pitch_slot": "string"
+          }
+        ]
+      }
+order: 1000

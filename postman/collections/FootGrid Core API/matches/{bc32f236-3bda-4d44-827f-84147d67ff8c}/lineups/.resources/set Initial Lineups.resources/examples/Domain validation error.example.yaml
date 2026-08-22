@@ -1,0 +1,44 @@
+$kind: http-example
+request:
+  url: "{{baseUrl}}/matches/:matchId/lineups"
+  method: PUT
+  headers:
+    - key: Idempotency-Key
+      value: stringstringstring
+    - key: Content-Type
+      value: application/json
+    - key: Accept
+      value: application/problem+json
+    - key: Authorization
+      value: Bearer <token>
+      description: "Added as a part of security scheme: bearer"
+  pathVariables:
+    matchId: e423c2ae-2801-1828-5c76-08a15b56446e
+  body:
+    type: json
+    content: |-
+      {
+        "home_starter_ids": [
+          "ac15b658-1a4e-13cd-f68d-2a51a8d323e2",
+          "1bbcca93-198a-fe19-049b-ffabc0155209"
+        ],
+        "away_starter_ids": [
+          "cb6b56ca-20a6-6de1-0267-c6e4485be9dc",
+          "3ca1f7d4-9be6-553e-3add-db55d04ee5c9"
+        ]
+      }
+response:
+  statusCode: 422
+  statusText: Unprocessable Entity (WebDAV) (RFC 4918)
+  headers:
+    Content-Type: application/problem+json
+  body:
+    type: json
+    content: |-
+      {
+        "title": "string",
+        "status": 6822,
+        "trace_id": "string",
+        "detail": "string"
+      }
+order: 2000
