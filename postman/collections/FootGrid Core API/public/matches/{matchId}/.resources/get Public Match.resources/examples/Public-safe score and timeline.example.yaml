@@ -1,0 +1,28 @@
+$kind: http-example
+request:
+  url: "{{baseUrl}}/public/matches/:matchId"
+  method: GET
+  headers:
+    - key: Accept
+      value: application/json
+    - key: Authorization
+      value: Bearer <token>
+      description: "Added as a part of security scheme: bearer"
+  pathVariables:
+    matchId: e423c2ae-2801-1828-5c76-08a15b56446e
+response:
+  statusCode: 200
+  statusText: OK
+  headers:
+    Content-Type: application/json
+  body:
+    type: json
+    content: |-
+      {
+        "match_id": "4a64fee9-4a94-1327-96e6-a3a89dc7e75b",
+        "event_sequence": 2174,
+        "home_score": 2818,
+        "away_score": 6232,
+        "status": "string"
+      }
+order: 1000

@@ -1,0 +1,59 @@
+$kind: http-example
+request:
+  url: "{{baseUrl}}/matches/:matchId/events/:eventId/reverse"
+  method: POST
+  headers:
+    - key: Idempotency-Key
+      value: stringstringstring
+    - key: Content-Type
+      value: application/json
+    - key: Accept
+      value: application/json
+    - key: Authorization
+      value: Bearer <token>
+      description: "Added as a part of security scheme: bearer"
+  pathVariables:
+    matchId: e423c2ae-2801-1828-5c76-08a15b56446e
+    eventId: e423c2ae-2801-1828-5c76-08a15b56446e
+  body:
+    type: json
+    content: |-
+      {
+        "client_event_id": "e6cbba4d-8d1d-4bf6-f924-1b58e7fab5ab",
+        "expected_sequence": 3417,
+        "reason": "string"
+      }
+response:
+  statusCode: 201
+  statusText: Created
+  headers:
+    Content-Type: application/json
+  body:
+    type: json
+    content: |-
+      {
+        "event": {
+          "id": "86a02a9d-2e1d-b49c-de24-66c07859e248",
+          "sequence": 9751,
+          "action_code": "string",
+          "side": "AWAY",
+          "subjects": [
+            {
+              "role": "ASSISTER",
+              "participant_id": "907e14f4-45c2-ac3a-5d12-9ddb7a28d41c"
+            },
+            {
+              "role": "SCORER",
+              "participant_id": "5f568eb8-39d9-209d-3382-01719d76fde7"
+            }
+          ]
+        },
+        "snapshot": {
+          "match_id": "5ed582be-6ae9-54e0-7d9a-e6418441c445",
+          "event_sequence": 4088,
+          "home_score": 4759,
+          "away_score": 501,
+          "status": "string"
+        }
+      }
+order: 1000

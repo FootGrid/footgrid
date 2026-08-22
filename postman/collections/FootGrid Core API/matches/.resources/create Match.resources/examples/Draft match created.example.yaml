@@ -1,0 +1,56 @@
+$kind: http-example
+request:
+  url: "{{baseUrl}}/matches"
+  method: POST
+  headers:
+    - key: Idempotency-Key
+      value: stringstringstring
+    - key: Content-Type
+      value: application/json
+    - key: Accept
+      value: application/json
+    - key: Authorization
+      value: Bearer <token>
+      description: "Added as a part of security scheme: bearer"
+  body:
+    type: json
+    content: |-
+      {
+        "organization_id": "1804d9ed-e26c-8edf-a928-960169da3c8e",
+        "format_code": "6V6",
+        "players_per_side": 7,
+        "period_count": 2,
+        "total_duration_seconds": 4472,
+        "home": {
+          "display_name": "string",
+          "team_id": "87edafcc-8a39-8191-d8db-3f15892e5b14"
+        },
+        "away": {
+          "display_name": "string",
+          "team_id": null
+        },
+        "venue_name": "string"
+      }
+response:
+  statusCode: 201
+  statusText: Created
+  headers:
+    Content-Type: application/json
+  body:
+    type: json
+    content: |-
+      {
+        "id": "2438a968-aa72-25fa-02a9-7abcffc2b05d",
+        "organization_id": "6b7a96aa-e79d-b90e-dea5-a8a7e39fb6f2",
+        "status": "FINALIZED",
+        "event_sequence": 7910,
+        "home": {
+          "display_name": "string",
+          "team_id": null
+        },
+        "away": {
+          "display_name": "string",
+          "team_id": "f46f18a6-9a55-d420-87c4-ab45f7253246"
+        }
+      }
+order: 1000

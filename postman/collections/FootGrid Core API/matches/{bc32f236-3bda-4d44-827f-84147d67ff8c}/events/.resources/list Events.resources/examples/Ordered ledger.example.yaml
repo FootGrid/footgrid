@@ -1,0 +1,60 @@
+$kind: http-example
+request:
+  url: "{{baseUrl}}/matches/:matchId/events?after_sequence=6919"
+  method: GET
+  headers:
+    - key: Accept
+      value: application/json
+    - key: Authorization
+      value: Bearer <token>
+      description: "Added as a part of security scheme: bearer"
+  queryParams:
+    after_sequence: "6919"
+  pathVariables:
+    matchId: e423c2ae-2801-1828-5c76-08a15b56446e
+response:
+  statusCode: 200
+  statusText: OK
+  headers:
+    Content-Type: application/json
+  body:
+    type: json
+    content: |-
+      {
+        "items": [
+          {
+            "id": "7ae9245e-a6c2-3bfd-baad-5aaa36c6c3f9",
+            "sequence": 1310,
+            "action_code": "string",
+            "side": "HOME",
+            "subjects": [
+              {
+                "role": "OPPONENT",
+                "participant_id": "5103426d-595d-3453-7c60-6a0f44fe50cb"
+              },
+              {
+                "role": "SCORER",
+                "participant_id": "f76ded5f-ef6d-ea83-9082-52b47d2a9361"
+              }
+            ]
+          },
+          {
+            "id": "20d8b48c-d424-cdb6-af1e-2a8da7ab7606",
+            "sequence": 8405,
+            "action_code": "string",
+            "side": "HOME",
+            "subjects": [
+              {
+                "role": "ASSISTER",
+                "participant_id": "ee5369fd-f30d-7072-c31a-e9601ef0b5d3"
+              },
+              {
+                "role": "SCORER",
+                "participant_id": "c6f0d1fc-f1b1-f33d-897f-a48b0df159a2"
+              }
+            ]
+          }
+        ],
+        "last_sequence": 3142
+      }
+order: 1000

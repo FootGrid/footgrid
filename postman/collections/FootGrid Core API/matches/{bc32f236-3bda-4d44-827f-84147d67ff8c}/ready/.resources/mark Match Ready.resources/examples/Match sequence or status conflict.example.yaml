@@ -1,0 +1,30 @@
+$kind: http-example
+request:
+  url: "{{baseUrl}}/matches/:matchId/ready"
+  method: POST
+  headers:
+    - key: Idempotency-Key
+      value: stringstringstring
+    - key: Accept
+      value: application/problem+json
+    - key: Authorization
+      value: Bearer <token>
+      description: "Added as a part of security scheme: bearer"
+  pathVariables:
+    matchId: e423c2ae-2801-1828-5c76-08a15b56446e
+response:
+  statusCode: 409
+  statusText: Conflict
+  headers:
+    Content-Type: application/problem+json
+  body:
+    type: json
+    content: |-
+      {
+        "title": "string",
+        "status": 4601,
+        "trace_id": "string",
+        "detail": "string",
+        "current_sequence": 8813
+      }
+order: 2000

@@ -1,0 +1,40 @@
+$kind: http-example
+request:
+  url: "{{baseUrl}}/me"
+  method: GET
+  headers:
+    - key: Accept
+      value: application/json
+    - key: Authorization
+      value: Bearer <token>
+      description: "Added as a part of security scheme: bearer"
+response:
+  statusCode: 200
+  statusText: OK
+  headers:
+    Content-Type: application/json
+  body:
+    type: json
+    content: |-
+      {
+        "user": {
+          "id": "3174c457-1d82-40c3-3374-9e246155e380",
+          "cognito_subject": "09c13109-0411-6740-3b32-61b0857727c0",
+          "display_name": "string"
+        },
+        "memberships": [
+          {
+            "id": "30f7bc2e-eb3c-7e61-04fd-cf51a656d2ed",
+            "organization_id": "eca49392-dd76-1e58-554f-e29a03a2a2b8",
+            "role": "string",
+            "status": "string"
+          },
+          {
+            "id": "df7a3860-88f4-51eb-b778-04801b40f966",
+            "organization_id": "ade890ef-717b-d538-44d8-6fa967366ce9",
+            "role": "string",
+            "status": "string"
+          }
+        ]
+      }
+order: 1000

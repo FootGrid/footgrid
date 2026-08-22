@@ -1,0 +1,13 @@
+# Use this workspace to collaborate
+workspace:
+  id: 346879f5-7669-49d1-863d-13b059ac9837
+
+localResources:
+  specs:
+    - ../api/openapi.yaml
+
+# Each entry here maps a local resource to one or more corresponding objects in Postman Cloud
+
+cloudResources:
+  collections:
+    ../postman/collections/FootGrid Core API: 4cd7eeee-9f4d-430a-83a3-6d7caf6d4d74

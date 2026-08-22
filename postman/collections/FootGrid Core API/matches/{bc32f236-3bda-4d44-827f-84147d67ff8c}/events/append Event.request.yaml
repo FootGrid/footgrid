@@ -1,0 +1,32 @@
+$kind: http-request
+url: "{{baseUrl}}/matches/:matchId/events"
+method: POST
+headers:
+  Idempotency-Key: stringstringstring
+  Content-Type: application/json
+  Accept: application/json
+pathVariables:
+  matchId: e423c2ae-2801-1828-5c76-08a15b56446e
+body:
+  type: json
+  content: |-
+    {
+      "client_event_id": "0be38776-46ff-c93b-7790-e6afcf224612",
+      "expected_sequence": 6063,
+      "action_code": "KEY_PASS",
+      "side": "HOME",
+      "subjects": [
+        {
+          "role": "PLAYER_OFF",
+          "participant_id": "5579e551-e374-3e4c-d89a-3dd1fe0acd08"
+        }
+      ],
+      "qualifiers": {
+        "key_0": 1976,
+        "key_1": 9170,
+        "key_2": true
+      }
+    }
+settings: {}
+examples: ./.resources/append Event.resources/examples
+order: 3000

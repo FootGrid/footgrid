@@ -1,0 +1,12 @@
+$kind: http-request
+url: "{{baseUrl}}/matches/:matchId/events?after_sequence=6919"
+method: GET
+headers:
+  Accept: application/json
+queryParams:
+  after_sequence: "6919"
+pathVariables:
+  matchId: e423c2ae-2801-1828-5c76-08a15b56446e
+settings: {}
+examples: ./.resources/list Events.resources/examples
+order: 2000

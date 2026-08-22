@@ -1,0 +1,29 @@
+$kind: http-example
+request:
+  url: "{{baseUrl}}/matches/:matchId/ready"
+  method: POST
+  headers:
+    - key: Idempotency-Key
+      value: stringstringstring
+    - key: Accept
+      value: application/problem+json
+    - key: Authorization
+      value: Bearer <token>
+      description: "Added as a part of security scheme: bearer"
+  pathVariables:
+    matchId: e423c2ae-2801-1828-5c76-08a15b56446e
+response:
+  statusCode: 422
+  statusText: Unprocessable Entity (WebDAV) (RFC 4918)
+  headers:
+    Content-Type: application/problem+json
+  body:
+    type: json
+    content: |-
+      {
+        "title": "string",
+        "status": 6822,
+        "trace_id": "string",
+        "detail": "string"
+      }
+order: 3000

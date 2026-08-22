@@ -1,0 +1,81 @@
+$kind: http-example
+request:
+  url: "{{baseUrl}}/matches/:matchId/roster"
+  method: PUT
+  headers:
+    - key: Idempotency-Key
+      value: stringstringstring
+    - key: Content-Type
+      value: application/json
+    - key: Accept
+      value: application/problem+json
+    - key: Authorization
+      value: Bearer <token>
+      description: "Added as a part of security scheme: bearer"
+  pathVariables:
+    matchId: e423c2ae-2801-1828-5c76-08a15b56446e
+  body:
+    type: json
+    content: |-
+      {
+        "home": [
+          {
+            "id": "9dd6e0cf-d202-d345-0552-4a4069ef39b8",
+            "side": "HOME",
+            "shirt_number": 45,
+            "display_name": "string",
+            "participation_status": "BENCH",
+            "player_id": "dbd72558-bda3-b4e6-7c8e-cbd40d1155f1",
+            "position_code": "string",
+            "pitch_slot": "string"
+          },
+          {
+            "id": "033f0e85-c0e4-dac4-2428-56f1cedbf60a",
+            "side": "AWAY",
+            "shirt_number": 64,
+            "display_name": "string",
+            "participation_status": "BENCH",
+            "player_id": null,
+            "position_code": "string",
+            "pitch_slot": "string"
+          }
+        ],
+        "away": [
+          {
+            "id": "b7471d28-7bdf-c1a2-3329-4663e9dafef7",
+            "side": "AWAY",
+            "shirt_number": 15,
+            "display_name": "string",
+            "participation_status": "BENCH",
+            "player_id": "fbc487b5-ec52-8ce7-31af-ce84c77cdaad",
+            "position_code": "string",
+            "pitch_slot": "string"
+          },
+          {
+            "id": "934f59b1-9728-1bf7-859b-b9b77b46c542",
+            "side": "HOME",
+            "shirt_number": 13,
+            "display_name": "string",
+            "participation_status": "NOT_SELECTED",
+            "player_id": null,
+            "position_code": "string",
+            "pitch_slot": "string"
+          }
+        ]
+      }
+response:
+  statusCode: 409
+  statusText: Conflict
+  headers:
+    Content-Type: application/problem+json
+  body:
+    type: json
+    content: |-
+      {
+        "title": "string",
+        "status": 4601,
+        "trace_id": "string",
+        "detail": "string",
+        "current_sequence": 8813
+      }
+order: 2000

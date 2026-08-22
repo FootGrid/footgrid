@@ -1,0 +1,21 @@
+$kind: http-request
+url: "{{baseUrl}}/matches/:matchId/events/:eventId/reverse"
+method: POST
+headers:
+  Idempotency-Key: stringstringstring
+  Content-Type: application/json
+  Accept: application/json
+pathVariables:
+  matchId: e423c2ae-2801-1828-5c76-08a15b56446e
+  eventId: e423c2ae-2801-1828-5c76-08a15b56446e
+body:
+  type: json
+  content: |-
+    {
+      "client_event_id": "e6cbba4d-8d1d-4bf6-f924-1b58e7fab5ab",
+      "expected_sequence": 3417,
+      "reason": "string"
+    }
+settings: {}
+examples: ./.resources/reverse Event.resources/examples
+order: 1000

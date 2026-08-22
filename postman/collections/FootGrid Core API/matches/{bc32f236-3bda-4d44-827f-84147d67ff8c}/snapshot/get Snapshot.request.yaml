@@ -1,0 +1,10 @@
+$kind: http-request
+url: "{{baseUrl}}/matches/:matchId/snapshot"
+method: GET
+headers:
+  Accept: application/json
+pathVariables:
+  matchId: e423c2ae-2801-1828-5c76-08a15b56446e
+settings: {}
+examples: ./.resources/get Snapshot.resources/examples
+order: 1000
